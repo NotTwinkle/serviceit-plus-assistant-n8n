@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build output
+dist/
+*.local
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary files
+*.tmp
+*.temp
+
+# n8n workflow files with sensitive data (keep template)
+# n8n-workflow-*.json
+
+# API keys and credentials
+**/secrets/
+**/*.key
+**/*.pem
+
+# Coverage reports
+coverage/
+*.lcov
+
+# Build artifacts
+*.tsbuildinfo
