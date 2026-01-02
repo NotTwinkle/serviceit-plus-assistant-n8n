@@ -1,0 +1,1585 @@
+{
+  "name": "Ivanti AI Intelligent Routing (Ollama + Gemini Agent)",
+  "nodes": [
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash-lite-preview-09-2025",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        528,
+        32
+      ],
+      "id": "a4a38fdd-ab7a-4741-a60d-71df520b3e52",
+      "name": "Google Gemini Chat Model2",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "FSdsyn8rvipAhmpO",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash-lite-preview",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -592,
+        192
+      ],
+      "id": "af8833fd-ab95-4b03-87e7-8b6d6cda38ac",
+      "name": "Google Gemini Chat Model1",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "FSdsyn8rvipAhmpO",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// PARSE OLLAMA JSON & RECOVER CONTEXT\nconst items = $input.all();\n\n// 1. Get the AI Response (from previous node)\nconst aiOutput = items[0].json;\nconst aiText = aiOutput.text || aiOutput.output || \"\";\n\n// 2. RECOVER CONTEXT\n// We grab the original context from Security & Data Prep.\nconst originalContext = $('Security & Data Prep').first().json;\n\n// 3. Clean and Parse JSON\nconst cleanJson = aiText.replace(/```json/g, '').replace(/```/g, '').trim();\n\nlet routeData = { intent: 'agent', entity: null };\ntry {\n  routeData = JSON.parse(cleanJson);\n} catch (e) {\n  // If parsing fails, default to agent\n  routeData = { intent: 'agent' };\n}\n\n// 4. Allow forcedIntent from the extension to override router decision\nlet route = routeData.intent || 'agent';\nif (originalContext.forcedIntent) {\n  route = originalContext.forcedIntent;\n}\n\n// 5. Merge Everything\nreturn [{\n  json: {\n    ...originalContext, // restores sessionId, userEmail, query, templateContext, etc.\n    route,\n    targetTicket: routeData.entity\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        -32
+      ],
+      "id": "abcd7188-f4e3-43bf-80f2-bd3819a1c667",
+      "name": "Parse Router Output"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ivanti-chat",
+        "responseMode": "responseNode",
+        "options": {
+          "binaryPropertyName": ""
+        }
+      },
+      "id": "253260e0-9d55-4efd-acd3-468696d2b4b0",
+      "name": "Webhook - Ivanti AI",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -2160,
+        -32
+      ],
+      "webhookId": "25826745-fe6a-4989-a66d-c027f92c6836"
+    },
+    {
+      "parameters": {
+        "jsCode": "// UNIVERSAL FIX FOR n8n v1.121.3\n// Use $input.all() so this works regardless of how n8n groups data.\nconst items = $input.all();\n\n// Safety check: Did we get data?\nif (items.length === 0) {\n  return [{ json: { error: \"No data received\" } }];\n}\n\nconst firstItem = items[0].json;\n\n// 1. SECURITY CHECK\nconst clientSecret = firstItem.headers ? firstItem.headers['x-extension-secret'] : '';\n// NOTE: In this environment, Code nodes cannot read $env, so we keep a static secret here.\n// Make sure this matches the value your extension sends in the x-extension-secret header.\nconst mySecret = 'my-super-secret-password-123'; // <--- CHANGE THIS TO YOUR REAL SHARED SECRET\n\nif (clientSecret !== mySecret) {\n  // Use return instead of throw to avoid crashing the workflow\n  return [{ json: { error: \"Unauthorized\", authorized: false } }];\n}\n\n// 2. DATA NORMALIZATION\nconst payload = firstItem.body || firstItem;\nconst userEmail = payload.userLoginId || \"unknown_user\";\n\n// 3. Template context (from the extension)\nconst templateContext = payload.templateContext || null;\nconst requiresFollowUp = templateContext?.requiresFollowUp || false;\nconst templateAction = templateContext?.templateAction || null;\n\n// Optional: forced intent for bypassing or overriding the router decision\nconst forcedIntent = payload.forcedIntent || null;\n\n// 4. Extract Ivanti configuration (for dynamic URLs and auth)\nconst ivantiConfig = payload.ivantiConfig || {\n  baseUrl: \"https://success.serviceitplus.com\", // Fallback default\n  apiPathPrefix: \"/HEAT/api\", // Fallback default\n  apiKey: \"\" // Fallback default\n};\n\n// 5. Extract cookies for Ivanti API authentication (REQUIRED for Ivanti APIs)\nconst cookies = payload.cookies || \"\";\n\n// 6. Extract conversation history (CRITICAL for context)\n// Format: [{ role: 'user'|'assistant', content: '...', timestamp: ... }]\nconst conversationHistory = payload.conversationHistory || [];\n\n// Convert conversation history to format expected by LangChain/Redis Memory\n// Redis Chat Memory expects messages in format: [{ role: 'human'|'ai', content: '...' }]\nconst formattedHistory = conversationHistory.map(msg => {\n  return {\n    role: msg.role === 'user' ? 'human' : msg.role === 'assistant' ? 'ai' : msg.role,\n    content: msg.content || '',\n    timestamp: msg.timestamp || Date.now()\n  };\n});\n\n// Return a clean object with sessionId explicitly defined\nreturn [{\n  json: {\n    sessionId: userEmail, // Memory node needs this specific key\n    query: payload.message || \"\",\n    userEmail: userEmail,\n    userContext: {\n      ticketId: payload.ticketId || null,\n      url: payload.url || \"\"\n    },\n    templateContext,\n    requiresFollowUp,\n    templateAction,\n    forcedIntent,\n    ivantiConfig: ivantiConfig, // Critical for all downstream nodes\n    cookies: cookies, // Session cookies for Ivanti API authentication\n    conversationHistory: formattedHistory, // Formatted conversation history for Redis Memory\n    rawConversationHistory: conversationHistory // Keep original format for reference\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1936,
+        -32
+      ],
+      "id": "fd423d95-a2ae-4157-a3f1-5e4bccbdc12b",
+      "name": "Security & Data Prep"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.ivantiConfig.baseUrl }}{{ $json.ivantiConfig.apiPathPrefix }}/odata/businessobject/servicereqs",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$top",
+              "value": "50"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'rest_api_key=' + ($json.ivantiConfig && $json.ivantiConfig.apiKey ? $json.ivantiConfig.apiKey : '') }}"
+            },
+            {
+              "name": "Cookie",
+              "value": "={{ $json.cookies || '' }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1280,
+        160
+      ],
+      "id": "a5de1b28-b4d7-45ed-88e1-8cef3b1c59ea",
+      "name": "Discover Service Request Offerings"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.ivantiConfig.baseUrl }}{{ $json.ivantiConfig.apiPathPrefix }}/odata/businessobject/priorities",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$top",
+              "value": "20"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'rest_api_key=' + ($json.ivantiConfig && $json.ivantiConfig.apiKey ? $json.ivantiConfig.apiKey : '') }}"
+            },
+            {
+              "name": "Cookie",
+              "value": "={{ $json.cookies || '' }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1280,
+        -32
+      ],
+      "id": "2679f8b9-11d8-4d8a-96f8-acdea1aa86e9",
+      "name": "Discover Priorities"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.ivantiConfig.baseUrl }}{{ $json.ivantiConfig.apiPathPrefix }}/odata/businessobject/categorys",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$top",
+              "value": "50"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'rest_api_key=' + ($json.ivantiConfig && $json.ivantiConfig.apiKey ? $json.ivantiConfig.apiKey : '') }}"
+            },
+            {
+              "name": "Cookie",
+              "value": "={{ $json.cookies || '' }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1280,
+        -240
+      ],
+      "id": "8fbcf07d-1deb-4ed4-98c3-26fef7d318f9",
+      "name": "Discover Categories"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format discovery data for the Smart Agent\nlet categoriesData, prioritiesData, offeringsData;\n\ntry {\n  categoriesData = $('Discover Categories').first().json;\n} catch (e) {\n  console.log('Categories discovery failed:', e);\n  categoriesData = { value: [] };\n}\n\ntry {\n  prioritiesData = $('Discover Priorities').first().json;\n} catch (e) {\n  console.log('Priorities discovery failed:', e);\n  prioritiesData = { value: [] };\n}\n\ntry {\n  offeringsData = $('Discover Service Request Offerings').first().json;\n} catch (e) {\n  console.log('Offerings discovery failed:', e);\n  offeringsData = { value: [] };\n}\n\nconst categories = categoriesData.value || [];\nconst priorities = prioritiesData.value || [];\nconst offerings = offeringsData.value || [];\n\nconst formattedData = {\n  categories: categories.map(cat => ({\n    id: cat.RecId,\n    name: cat.Name,\n    description: cat.Description || ''\n  })),\n  priorities: priorities.map(pri => ({\n    id: pri.RecId,\n    name: pri.Name,\n    order: pri.PriorityOrder || 0,\n    description: pri.Description || ''\n  })),\n  serviceRequestOfferings: offerings.map(off => ({\n    id: off.RecId,\n    name: off.Name,\n    description: off.Description || ''\n  }))\n};\n\n// Merge with original data from Security & Data Prep\nconst originalData = $('Security & Data Prep').first().json;\n\nreturn [{\n  json: {\n    ...originalData, // This preserves the real ivantiConfig from Security & Data Prep\n    discoveryData: formattedData, // Renamed to avoid conflict with ivantiConfig\n    availableCategories: formattedData.categories.length > 0\n      ? formattedData.categories.map(c => c.name).join(', ')\n      : 'Not available',\n    availablePriorities: formattedData.priorities.length > 0\n      ? formattedData.priorities.map(p => p.name).join(', ')\n      : 'Not available',\n    availableOfferings: formattedData.serviceRequestOfferings.length > 0\n      ? formattedData.serviceRequestOfferings.map(o => o.name).join(', ')\n      : 'Not available'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1024,
+        -32
+      ],
+      "id": "c6e52bbe-ef55-41d7-9dde-5f3aa7fc01e6",
+      "name": "Format Discovery Data"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.query }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are an Enterprise Service Desk Router. Analyze the user's query and output valid JSON.\n\nROUTING RULES:\n1. \"lookup\": User wants status of a specific ticket (e.g. \"Status of INC-100\", \"Where is my request?\"). Extract the ID.\n2. \"my_tickets\": User wants to see their list of open items (e.g. \"Show my tickets\", \"What do I have open?\").\n3. \"agent\": Complex requests, creating tickets, searching documentation, or fixing errors.\n\nOUTPUT FORMAT (JSON ONLY):\n{\n  \"intent\": \"lookup\" | \"my_tickets\" | \"agent\",\n  \"entity\": \"INC-XXXXX\" (or null)\n}"
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        -608,
+        -32
+      ],
+      "id": "2631659e-d7bb-4987-b0d8-5ec1206a5645",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a helpful, professional IT Service Desk Assistant.\nI have queried the database for the user. Below is the raw technical data returned.\n\nRAW DATA FROM IVANTI:\n{{ JSON.stringify($input.all().map(i => i.json)) }}\n\nINSTRUCTIONS:\n1. Analyze the raw data above.\n2. If the data is a specific ticket, tell the user the status, subject, and any recent notes in a conversational way.\n3. If the data is a list of tickets, summarize them (e.g., \"You have 3 open tickets. The most recent one is...\").\n4. If the raw data is empty or says \"value: []\", politely tell the user you couldn't find any matching records.\n- If this was a request for \"my tickets\" or \"show all tickets\", say: \"You don't have any open tickets at the moment. All your tickets are closed.\"\n- If this was a search, say: \"I couldn't find any matching records. Please check the information and try again.\"\n5. Do NOT mention \"JSON\", \"API\", or \"OData\". Speak naturally.\n6. Keep it concise (under 3 sentences).",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        528,
+        -176
+      ],
+      "id": "29ea7c4b-3184-4881-ae6a-6b585dc1625f",
+      "name": "AI Summarizer"
+    },
+    {
+      "parameters": {
+        "url": "https://api.firecrawl.dev/v1/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $fromAI(\"query\") }}"
+            },
+            {
+              "name": "includeDomains",
+              "value": "[\"help.ivanti.com\", \"success.serviceitplus.com\"]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        560,
+        656
+      ],
+      "id": "f7f4fd2d-96e6-4a6b-acf8-2fcd7d221a7c",
+      "name": "firecrawl_search",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "15xnPmmgaKrlRruF",
+          "name": "Firecrawl"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Fetch Ivanti metadata (fields, templates, relationships) for a given business object name.",
+        "url": "={{ $json.ivantiConfig.baseUrl }}{{ $json.ivantiConfig.apiPathPrefix }}/odata/businessobject/Metadata",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "boName",
+              "value": "={{ $fromAI(\"boName\") }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'rest_api_key=' + ($json.ivantiConfig && $json.ivantiConfig.apiKey ? $json.ivantiConfig.apiKey : '') }}"
+            },
+            {
+              "name": "Cookie",
+              "value": "={{ $json.cookies || '' }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        736,
+        656
+      ],
+      "id": "365406be-3e51-426c-a0c3-44c62574bd5e",
+      "name": "ivanti_metadata"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Create a new Knowledge Base article. Use this when you successfully help a user solve an issue and no existing KB article covers the solution. Required parameters: 'title' (string), 'details' (string - the solution/instructions), 'category' (optional string). The article will be created in Draft status for review.",
+        "method": "POST",
+        "url": "={{ $json.ivantiConfig.baseUrl }}{{ $json.ivantiConfig.apiPathPrefix }}/odata/businessobject/FRS_Knowledges",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'rest_api_key=' + ($json.ivantiConfig && $json.ivantiConfig.apiKey ? $json.ivantiConfig.apiKey : '') }}"
+            },
+            {
+              "name": "Cookie",
+              "value": "={{ $json.cookies || '' }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  \"Title\": $fromAI(\"title\"),\n  \"Details\": $fromAI(\"details\"),\n  \"Status\": \"Draft\"\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        912,
+        656
+      ],
+      "id": "999d3795-a5d3-42e4-b020-d51ab1cbad85",
+      "name": "create_kb_article"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.ivantiConfig.baseUrl }}{{ $json.ivantiConfig.apiPathPrefix }}/odata/businessobject/incidents",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$filter",
+              "value": "=ProfileLink_RecID eq '{{ $fromAI(\"recid\") }}' and Status ne 'Closed'"
+            },
+            {
+              "name": "$top",
+              "value": "5"
+            },
+            {
+              "name": "$orderby",
+              "value": "CreatedDateTime desc"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'rest_api_key=' + ($json.ivantiConfig && $json.ivantiConfig.apiKey ? $json.ivantiConfig.apiKey : '') }}"
+            },
+            {
+              "name": "Cookie",
+              "value": "={{ $json.cookies || '' }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        912,
+        496
+      ],
+      "id": "fe5f0a69-c0be-4c19-85bb-240ff6cc1420",
+      "name": "Get tickets agent"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Find a user's details (ID, Team, Email) by searching their email address or name.",
+        "url": "={{ $json.ivantiConfig.baseUrl }}{{ $json.ivantiConfig.apiPathPrefix }}/odata/businessobject/employees",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$filter",
+              "value": "=LoginID eq '{{ $json.userEmail }}'"
+            },
+            {
+              "name": "$select",
+              "value": "RecId,LoginID,DisplayName,PrimaryEmail,Department,Team"
+            },
+            {
+              "name": "$top",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'rest_api_key=' + ($json.ivantiConfig && $json.ivantiConfig.apiKey ? $json.ivantiConfig.apiKey : '') }}"
+            },
+            {
+              "name": "Cookie",
+              "value": "={{ $json.cookies || '' }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        736,
+        496
+      ],
+      "id": "78e96a7a-1dd1-4965-9b74-5f1c16fa78d7",
+      "name": "get_user_details"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Search Knowledge Base articles. Returns up to 500 most recently modified articles. YOU MUST: 1) Filter results to only show articles where Status = 'Published' (ignore Draft, Rejected, etc.), 2) Search through Title and Details fields for keywords matching the user's query (case-insensitive), 3) Present matching articles to the user. If no matches found after filtering for Published status, say 'I couldn't find a published article about [topic] in the knowledge base.'",
+        "url": "={{ $json.ivantiConfig.baseUrl }}{{ $json.ivantiConfig.apiPathPrefix }}/odata/businessobject/FRS_Knowledges",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$top",
+              "value": "500"
+            },
+            {
+              "name": "$orderby",
+              "value": "ModifiedDateTime desc"
+            },
+            {
+              "name": "$select",
+              "value": "RecId,Title,Details,Status,ArticleNumber,Collection,Category,Subcategory,Type"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'rest_api_key=' + ($json.ivantiConfig && $json.ivantiConfig.apiKey ? $json.ivantiConfig.apiKey : '') }}"
+            },
+            {
+              "name": "Cookie",
+              "value": "={{ $json.cookies || '' }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        560,
+        496
+      ],
+      "id": "ffd00c6c-a8f5-4ac8-8b46-0da4375bc4a0",
+      "name": "kb_search"
+    },
+    {
+      "parameters": {},
+      "type": "@n8n/n8n-nodes-langchain.memoryRedisChat",
+      "typeVersion": 1.5,
+      "position": [
+        352,
+        512
+      ],
+      "id": "f68127de-a222-40de-ab09-f91d0adcee5f",
+      "name": "Redis Chat Memory",
+      "credentials": {
+        "redis": {
+          "id": "euIZBYsJIsI5BeFI",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash-lite-preview-09-2025",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        176,
+        512
+      ],
+      "id": "77e05ec9-1b3d-4678-9682-db20908aaa19",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "FSdsyn8rvipAhmpO",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.query }}",
+        "options": {
+          "systemMessage": "=You are an expert Senior Service Desk Engineer specializing in Ivanti Neurons for ITSM. Your role is to help users efficiently resolve issues, find information, and manage their tickets within this organization's Ivanti environment.\n\n=== CORE PRINCIPLES ===\n1. **Ivanti-Only Scope**: You ONLY work with this organization's Ivanti instance. Never use general knowledge or discuss other systems.\n2. **Proactive Problem-Solving**: Anticipate user needs. If they ask about tickets, check them immediately. If they have an issue, search KB first before suggesting ticket creation.\n3. **Efficiency First**: Minimize tool calls. Use conversation history. Don't ask for information you already have.\n4. **User-Centric Communication**: Speak in plain language. No technical jargon. Assume users are non-technical.\n5. **Context Awareness - CRITICAL**: You have access to conversation history through Redis Memory. ALWAYS use it:\n   - If user says \"search the knowledge base\" and then says \"list 10 of them\", they mean the KB articles from the previous search\n   - If user says \"check it again\", they mean the last thing you checked (tickets, KB, etc.)\n   - If user references \"that issue\" or \"the problem\", look at conversation history to understand what they're referring to\n   - When user clicks a button (like \"Search KB\"), remember that action in the conversation context\n   - ALWAYS review the conversation history before responding to understand the full context\n\n=== YOUR CONTEXT ===\n- User Email: {{ $json.userEmail }}\n- Current Ticket (if on ticket page): {{ $json.userContext.ticketId || \"None\" }}\n- Template Intent: {{ $json.templateAction || \"none\" }}\n- Requires Follow-up: {{ $json.requiresFollowUp || false }}\n- Available Categories (from this Ivanti instance): {{ $json.availableCategories || \"Not available\" }}\n- Available Priorities (from this Ivanti instance): {{ $json.availablePriorities || \"Not available\" }}\n- Available Service Offerings (from this Ivanti instance): {{ $json.availableOfferings || \"Not available\" }}\n\n=== YOUR TOOLS (Use Strategically) ===\n\n**1. get_user_details**\n- When: Need user's RecId to fetch their tickets\n- Input: User email ({{ $json.userEmail }})\n- Returns: RecId, Team, DisplayName\n\n**2. Get tickets agent**\n- When: User asks about their tickets, or you need to check their open items\n- Requires: RecId from get_user_details (pass as `recid` parameter)\n- Returns: List of open incidents/requests\n- Tip: Always call get_user_details FIRST, then immediately call this with the RecId\n\n**3. kb_search**\n- When: User has a problem → ALWAYS check KB first before suggesting ticket creation\n- Returns: Up to 500 most recent KB articles (includes Published, Draft, Rejected)\n- CRITICAL SEARCH PROCESS:\n  1. Filter results to ONLY show articles where Status = 'Published' (ignore Draft, Rejected, etc.)\n  2. Search through Title and Details fields for keywords matching user's query (case-insensitive)\n  3. Look for partial matches - if user says \"bullying\", search for \"bully\", \"report bullying\", \"bullying issue\", etc.\n  4. If you find matching Published articles: Share the Title and key details\n  5. If NO matching Published articles found: Say \"I couldn't find a published article about [topic] in the knowledge base. Would you like me to create a ticket?\"\n- NEVER say \"I couldn't find\" unless you've actually searched through ALL Published articles in the results\n\n**4. firecrawl_search**\n- When: User asks about Ivanti features/documentation AND kb_search didn't help\n- Scope: Only searches help.ivanti.com and success.serviceitplus.com\n- Use sparingly: Only for Ivanti-specific documentation questions\n\n**5. ivanti_metadata**\n- When: Need to understand fields/templates for creating/updating tickets or KB articles\n- Use BEFORE: Creating tickets, explaining field options, or constructing API payloads\n- Prevents: Guessing field names or options\n\n**6. create_kb_article**\n- When: You successfully solved a user's issue AND no existing KB covers it\n- Prerequisites:\n  ✓ Issue is fully resolved\n  ✓ You checked kb_search - no similar solution exists\n  ✓ Solution is reusable (not user-specific)\n- Parameters: `title` (clear, descriptive), `details` (step-by-step instructions), `category` (optional)\n- Result: Creates Draft article for review\n- Always inform user: \"I've created a knowledge base article for this solution. It's in draft for review.\"\n\n=== DECISION TREES (Follow These Patterns) ===\n\n**User asks: \"Show my tickets\" / \"Check my tickets\" / \"What do I have open?\"**\n→ get_user_details → Get tickets agent → Summarize (count, most recent, status)\n\n**User has a problem / asks for help**\n→ kb_search (check for existing solution) → If found: Share solution → If not: Offer to create ticket\n\n**User asks about specific ticket (ticketId in context)**\n→ Fetch ticket details → Summarize status, latest notes, next steps\n\n**User asks: \"Search KB for X\" / templateAction = \"search_kb\"**\n→ If query incomplete: Ask \"What topic should I search for?\"\n→ If clear: kb_search → Filter and present relevant results\n\n**User says: \"I need help\" / templateAction = \"get_help\"**\n→ Acknowledge → Ask 1-2 clarifying questions → Offer options (check tickets, search KB, create incident, explain feature)\n\n**You successfully solve a user's issue**\n→ Check kb_search for similar solutions → If none exist: create_kb_article → Inform user\n\n**User asks about Ivanti features/processes**\n→ kb_search first → If not found: firecrawl_search (Ivanti docs only)\n\n**Need to create/update ticket and need field info**\n→ ivanti_metadata (get field names/options) → Use real values from metadata\n\n=== COMMUNICATION RULES ===\n\n**Tone & Style:**\n- Friendly, professional, empathetic\n- Short sentences (2-4 sentences per response)\n- Plain language - no acronyms, no API jargon, no technical terms\n- Never mention: tools, JSON, APIs, OData, system internals\n- Use examples and concrete steps\n\n**Response Structure (Always):**\n1. Acknowledge what they asked\n2. State what you're doing (in plain language)\n3. Execute (call tools)\n4. Present results clearly\n\n**When Tools Fail or Return Empty:**\n- Be honest: \"I couldn't find that in Ivanti\"\n- Suggest next step: \"Would you like me to create a new incident?\" or \"Let me search the knowledge base differently\"\n- Never guess or make up data\n\n**Error Recovery:**\n- If tool fails: Acknowledge, suggest alternative approach\n- If data missing: Ask ONE clear question, don't guess\n- If unclear input: Summarize what you understood, ask 1-2 specific questions\n\n=== SPECIAL SITUATIONS ===\n\n**Frustrated/Angry User:**\n- Acknowledge: \"I understand this is frustrating\" or \"Sorry you're having trouble\"\n- Stay calm, never mirror negativity\n- Focus on solution: \"Let me check [specific action] right away\"\n- Never blame user or other teams\n\n**Gibberish/Unclear Input:**\n- Politely: \"I didn't quite understand that. Could you rephrase?\"\n- Offer examples: \"You can say things like 'Show my tickets' or 'I need to reset my password'\"\n- If partially clear: Summarize what you understood, ask 1-2 specific questions\n\n**Out-of-Scope Questions:**\n- Politely: \"I can only help with Ivanti in your organization. This question is outside my scope.\"\n- Offer: \"Is there something Ivanti-related I can help with instead?\"\n\n**Using Dynamic Configuration:**\n- When presenting Categories/Priorities: Show 3-5 examples from availableCategories/availablePriorities\n- Never dump full lists or invent values\n- Use real names from Ivanti instance ({{ $json.availableCategories }}, {{ $json.availablePriorities }}, {{ $json.availableOfferings }})\n- Convert to user-friendly format (not raw data structures)\n\n=== EFFICIENCY TIPS ===\n- Use conversation history - don't re-ask for information already provided\n- Batch related tool calls when possible\n- If user says \"again\" or \"check it\", they mean the last thing you checked\n- Remember context: If they're on a ticket page, they likely want info about that ticket\n- Don't over-explain - be concise but helpful\n\n=== FINAL REMINDERS ===\n- You are helping real people with real problems. Be empathetic and efficient.\n- Every interaction should move toward resolution.\n- When in doubt, ask ONE clear question rather than guessing.\n- Always verify before creating KB articles - check if solution already exists.\n- Keep responses focused and actionable.\n\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        368,
+        256
+      ],
+      "id": "09aeecf7-163b-4640-a605-ef836ef9bbc1",
+      "name": "Smart Agent"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "lookup",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "ce8a976a-e831-4b6c-9b82-50b02b402f22"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "f22f04c2-0ebf-4c9f-a1d3-3cf44594c616",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "my_tickets",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "48af9c03-571c-43a8-9168-083b55a4238b",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "agent",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.3,
+      "position": [
+        -48,
+        -48
+      ],
+      "id": "5febe592-2e4e-4995-b9eb-0577c29c9362",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.ivantiConfig.baseUrl }}{{ $json.ivantiConfig.apiPathPrefix }}/odata/businessobject/incidents",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$filter",
+              "value": "=IncidentNumber eq '{{ $json.targetTicket }}'"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'rest_api_key=' + $json.ivantiConfig.apiKey }}"
+            },
+            {
+              "name": "Cookie",
+              "value": "={{ $json.cookies || '' }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        272,
+        -352
+      ],
+      "id": "e1bafbf3-6b75-43d0-bdf8-b7f46d7dd4c0",
+      "name": "Fast Lookup",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "url": "={{ ($('Security & Data Prep').first().json.ivantiConfig && $('Security & Data Prep').first().json.ivantiConfig.baseUrl ? $('Security & Data Prep').first().json.ivantiConfig.baseUrl : 'https://success.serviceitplus.com') + ($('Security & Data Prep').first().json.ivantiConfig && $('Security & Data Prep').first().json.ivantiConfig.apiPathPrefix ? $('Security & Data Prep').first().json.ivantiConfig.apiPathPrefix : '/HEAT/api') + '/odata/businessobject/employees' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$filter",
+              "value": "=LoginID eq '{{ $('Security & Data Prep').first().json.userEmail }}'"
+            },
+            {
+              "name": "$select",
+              "value": "=RecId,LoginID,PrimaryEmail,DisplayName"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'rest_api_key=' + ($('Security & Data Prep').first().json.ivantiConfig && $('Security & Data Prep').first().json.ivantiConfig.apiKey ? $('Security & Data Prep').first().json.ivantiConfig.apiKey : '') }}"
+            },
+            {
+              "name": "Cookie",
+              "value": "={{ $('Security & Data Prep').first().json.cookies || '' }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        192,
+        -64
+      ],
+      "id": "a5d8f8be-9683-4381-8504-9419068fdd85",
+      "name": "Get User ID"
+    },
+    {
+      "parameters": {
+        "url": "={{ ($('Security & Data Prep').first().json.ivantiConfig && $('Security & Data Prep').first().json.ivantiConfig.baseUrl ? $('Security & Data Prep').first().json.ivantiConfig.baseUrl : 'https://success.serviceitplus.com') + ($('Security & Data Prep').first().json.ivantiConfig && $('Security & Data Prep').first().json.ivantiConfig.apiPathPrefix ? $('Security & Data Prep').first().json.ivantiConfig.apiPathPrefix : '/HEAT/api') + '/odata/businessobject/incidents' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$top",
+              "value": "100"
+            },
+            {
+              "name": "$orderby",
+              "value": "CreatedDateTime desc"
+            },
+            {
+              "name": "$filter",
+              "value": "=ProfileLink_RecID eq '{{ $('Get User ID').first().json.value && $('Get User ID').first().json.value[0] && $('Get User ID').first().json.value[0].RecId ? $('Get User ID').first().json.value[0].RecId : '' }}' and Status ne 'Closed'"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'rest_api_key=' + ($('Security & Data Prep').first().json.ivantiConfig && $('Security & Data Prep').first().json.ivantiConfig.apiKey ? $('Security & Data Prep').first().json.ivantiConfig.apiKey : '') }}"
+            },
+            {
+              "name": "Cookie",
+              "value": "={{ $('Security & Data Prep').first().json.cookies || '' }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "redirect": {
+              "maxRedirects": 0
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        352,
+        -64
+      ],
+      "id": "1d0404a8-16f4-4d34-a339-d0eee84ab305",
+      "name": "Get My Tickets"
+    },
+    {
+      "parameters": {
+        "jsCode": "// UNIVERSAL FORMATTER (AI-First Edition) - Enhanced context recovery\nconst items = $input.all();\nif (!items.length) return [{ json: { response: \"No data.\" } }];\n\nconst data = items[0].json;\nlet output = \"\";\n\n// RECOVER CONTEXT from upstream nodes if missing from Smart Agent output\nlet userEmail = data.userEmail;\nlet query = data.query;\nlet sessionId = data.sessionId;\nlet route = data.route;\nlet userContext = data.userContext;\n\n// If context is missing (Smart Agent only outputs text), recover from upstream\nif (!userEmail || !sessionId) {\n  try {\n    // Try Format Discovery Data (closest upstream node)\n    const formatData = $('Format Discovery Data').first().json;\n    if (!userEmail && formatData.userEmail) userEmail = formatData.userEmail;\n    if (!sessionId && formatData.sessionId) sessionId = formatData.sessionId;\n    if (!query && formatData.query) query = formatData.query;\n    if (!route && formatData.route) route = formatData.route;\n    if (!userContext && formatData.userContext) userContext = formatData.userContext;\n  } catch (e) {\n    try {\n      // Fallback to Security & Data Prep (original source)\n      const securityData = $('Security & Data Prep').first().json;\n      if (!userEmail && securityData.userEmail) userEmail = securityData.userEmail;\n      if (!sessionId && securityData.sessionId) sessionId = securityData.sessionId;\n      if (!query && securityData.query) query = securityData.query;\n      if (!route && securityData.route) route = securityData.route;\n      if (!userContext && securityData.userContext) userContext = securityData.userContext;\n    } catch (e2) {\n      console.log('Could not recover context:', e2);\n    }\n  }\n}\n\n// PRESERVE CONTEXT\nconst preservedContext = {\n  userEmail: userEmail || null,\n  query: query || null,\n  sessionId: sessionId || null,\n  route: route || null,\n  userContext: userContext || null\n};\n\n// 1. Smart Agent output (LangChain Agent format)\nif (data.text) {\n    output = data.text;\n}\n// 2. AI Summarizer or Chain LLM output\nelse if (data.output) {\n    output = data.output;\n}\n// 3. Check for nested text/output in response object\nelse if (data.response?.text) {\n    output = data.response.text;\n}\nelse if (data.response?.output) {\n    output = data.response.output;\n}\n// 4. Handle raw API data (tickets array)\nelse if (data.value && Array.isArray(data.value)) {\n    if (data.value.length === 0) {\n        output = \"I couldn't find any matching records.\";\n    } else if (data.value[0].IncidentNumber) {\n        // Format incidents/tickets\n        output = data.value.map(t => `#${t.IncidentNumber}: ${t.Subject || 'No subject'}`).join('\\n');\n    } else if (data.value[0].Title) {\n        // Format KB articles\n        output = data.value.map(kb => `- ${kb.Title}`).join('\\n');\n    } else {\n        output = \"Found \" + data.value.length + \" record(s).\";\n    }\n}\n// 5. Handle string responses directly\nelse if (typeof data === 'string') {\n    output = data;\n}\n// 6. Last resort: stringify (but try to extract meaningful content)\nelse {\n    // Try to find any text-like fields\n    const textFields = ['message', 'content', 'result', 'answer'];\n    for (const field of textFields) {\n        if (data[field] && typeof data[field] === 'string') {\n            output = data[field];\n            break;\n        }\n    }\n    \n    // If still no output, stringify but clean it up\n    if (!output) {\n        output = JSON.stringify(data, null, 2);\n    }\n}\n\n// Ensure output is a string and not empty\nif (!output || typeof output !== 'string') {\n    output = \"I received a response, but couldn't format it properly.\";\n}\n\n// Return response with preserved context (both camelCase for workflow and snake_case for Supabase)\nreturn [{\n  json: {\n    response: output.trim(),\n    // camelCase (for workflow use)\n    ...preservedContext,\n    // snake_case (for Supabase nodes)\n    user_email: userEmail || null,\n    session_id: sessionId || null,\n    message_role: 'assistant', // This is the AI response\n    message_content: output.trim()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        -32
+      ],
+      "id": "676889d8-7afc-45b3-a1ad-646ea780e5c7",
+      "name": "Universal Formatter"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate Contextual Suggestions based on conversation history and current context\nconst items = $input.all();\nif (!items.length) return [{ json: { suggestions: [] } }];\n\nconst data = items[0].json;\nconst suggestions = [];\n\n// Get conversation history from Security & Data Prep\nlet conversationHistory = [];\ntry {\n  const securityData = $('Security & Data Prep').first().json;\n  conversationHistory = securityData.rawConversationHistory || securityData.conversationHistory || [];\n} catch (e) {\n  console.log('Could not get conversation history:', e);\n}\n\n// Get current query and response\nconst query = (data.query || '').toLowerCase().trim();\nconst response = (data.response || '').toLowerCase().trim();\nconst route = data.route || null;\nconst userContext = data.userContext || {};\n\n// Analyze last few messages for context\nconst recentMessages = conversationHistory.slice(-5);\nconst lastUserMessage = recentMessages.filter(m => m.role === 'user' || m.role === 'human').pop();\nconst lastAssistantMessage = recentMessages.filter(m => m.role === 'assistant' || m.role === 'ai').pop();\nconst lastUserContent = (lastUserMessage?.content || '').toLowerCase();\nconst lastAssistantContent = (lastAssistantMessage?.content || '').toLowerCase();\n\n// PATTERN 1: User searched KB or knowledge base\nif (lastUserContent.includes('search') && (lastUserContent.includes('kb') || lastUserContent.includes('knowledge') || lastUserContent.includes('article'))) {\n  suggestions.push({\n    id: 'suggest-more-kb',\n    label: 'Show more results',\n    prompt: 'Show me more knowledge base articles',\n    icon: '🔍',\n    priority: 1\n  });\n  \n  if (response.includes('no result') || response.includes('couldn\\'t find') || response.includes('not found')) {\n    suggestions.push({\n      id: 'suggest-create-ticket-after-kb',\n      label: 'Create ticket',\n      prompt: 'I need to create a ticket for this issue',\n      icon: '➕',\n      priority: 2\n    });\n  } else if (!response.includes('no result') && !response.includes('couldn\\'t find')) {\n    suggestions.push({\n      id: 'suggest-create-ticket-if-needed',\n      label: 'Create ticket if this doesn\\'t help',\n      prompt: 'This solution doesn\\'t help, I need to create a ticket',\n      icon: '➕',\n      priority: 3\n    });\n  }\n}\n\n// PATTERN 2: User viewed tickets\nif (lastUserContent.includes('ticket') && (lastUserContent.includes('show') || lastUserContent.includes('list') || lastUserContent.includes('my') || lastUserContent.includes('all'))) {\n  suggestions.push({\n    id: 'suggest-update-ticket',\n    label: 'Update a ticket',\n    prompt: 'I want to update one of my tickets',\n    icon: '✏️',\n    priority: 1\n  });\n  \n  suggestions.push({\n    id: 'suggest-create-new-ticket',\n    label: 'Create new ticket',\n    prompt: 'I need to create a new ticket',\n    icon: '➕',\n    priority: 2\n  });\n  \n  if (response.includes('no ticket') || response.includes('don\\'t have') || response.includes('closed')) {\n    suggestions.push({\n      id: 'suggest-search-kb-after-no-tickets',\n      label: 'Search knowledge base',\n      prompt: 'Search the knowledge base for common issues',\n      icon: '🔍',\n      priority: 3\n    });\n  }\n}\n\n// PATTERN 3: User just created a ticket (mentioned in response)\nif (response.includes('created') && (response.includes('ticket') || response.includes('incident'))) {\n  suggestions.push({\n    id: 'suggest-view-all-tickets',\n    label: 'View all tickets',\n    prompt: 'Show me all my open tickets',\n    icon: '📋',\n    priority: 1\n  });\n  \n  suggestions.push({\n    id: 'suggest-search-kb-while-waiting',\n    label: 'Search KB while waiting',\n    prompt: 'Search the knowledge base for solutions while waiting',\n    icon: '🔍',\n    priority: 2\n  });\n}\n\n// PATTERN 4: User has a problem/issue (mentioned in query or response)\nif (query.includes('problem') || query.includes('issue') || query.includes('help') || query.includes('error') || query.includes('broken')) {\n  // Only add if we haven't already added KB search suggestions\n  const hasKbSuggestion = suggestions.some(s => s.id.includes('kb'));\n  if (!hasKbSuggestion) {\n    suggestions.push({\n      id: 'suggest-search-kb-for-problem',\n      label: 'Search knowledge base',\n      prompt: 'Search the knowledge base for solutions',\n      icon: '🔍',\n      priority: 1\n    });\n  }\n  \n  // If problem not resolved, suggest creating ticket\n  if (response.includes('couldn\\'t') || response.includes('unable') || response.includes('not found') || response.includes('no solution')) {\n    suggestions.push({\n      id: 'suggest-create-ticket-for-problem',\n      label: 'Create ticket',\n      prompt: 'I need to create a ticket for this problem',\n      icon: '➕',\n      priority: 2\n    });\n  }\n}\n\n// PATTERN 5: User is on a ticket page (ticketId in context)\nif (userContext.ticketId) {\n  suggestions.push({\n    id: 'suggest-view-ticket-details',\n    label: 'View ticket details',\n    prompt: 'Show me details about this ticket',\n    icon: '📄',\n    priority: 1\n  });\n  \n  suggestions.push({\n    id: 'suggest-update-current-ticket',\n    label: 'Update this ticket',\n    prompt: 'I want to update this ticket',\n    icon: '✏️',\n    priority: 2\n  });\n}\n\n// PATTERN 6: Route-based suggestions\nif (route === 'my_tickets') {\n  // User just viewed their tickets\n  if (!suggestions.some(s => s.id === 'suggest-create-new-ticket')) {\n    suggestions.push({\n      id: 'suggest-create-new-ticket-route',\n      label: 'Create new ticket',\n      prompt: 'I need to create a new ticket',\n      icon: '➕',\n      priority: 2\n    });\n  }\n}\n\n// DEFAULT: If no contextual suggestions, provide general quick actions\nif (suggestions.length === 0) {\n  suggestions.push(\n    {\n      id: 'default-tickets',\n      label: 'Show my tickets',\n      prompt: 'Show me all my open tickets',\n      icon: '📋',\n      priority: 1\n    },\n    {\n      id: 'default-kb',\n      label: 'Search knowledge base',\n      prompt: 'Search the knowledge base',\n      icon: '🔍',\n      priority: 2\n    },\n    {\n      id: 'default-help',\n      label: 'I need help',\n      prompt: 'I need help with',\n      icon: '❓',\n      priority: 3\n    }\n  );\n}\n\n// Limit to 5 suggestions and sort by priority\nconst finalSuggestions = suggestions\n  .sort((a, b) => (a.priority || 999) - (b.priority || 999))\n  .slice(0, 5);\n\n// Return data with suggestions added\nreturn [{\n  json: {\n    ...data, // Preserve all original data\n    suggestions: finalSuggestions\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1008,
+        -32
+      ],
+      "id": "c1e782b7-aadf-423a-aeb0-7328fc0cd195",
+      "name": "Generate Contextual Suggestions"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1184,
+        -32
+      ],
+      "id": "25dbbd19-c5f1-4745-9fe5-4d03c51e2884",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "tableId": "solved_issues",
+        "dataToSend": "autoMapInputData"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1536,
+        -208
+      ],
+      "id": "7c0f5fa1-f5a1-4db8-a2d9-96f48fc7fac5",
+      "name": "Store Solved Issue",
+      "credentials": {
+        "supabaseApi": {
+          "id": "C9DU7WkG5rLShWM2",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Only store if issue was resolved + ensure context is present\nconst items = $input.all();\nif (items.length === 0) return []; // Return empty array to skip Supabase insert\n\nconst data = items[0].json;\nconst wasResolved = data.insights?.wasResolved || false;\n\nif (!wasResolved) {\n  return []; // Return empty array to skip Supabase insert\n}\n\n// CRITICAL: Ensure userEmail exists - recover from multiple sources if needed\nlet userEmail = data.userEmail;\nlet query = data.query;\nlet response = data.response;\n\n// If userEmail is missing, try to recover it\nif (!userEmail) {\n  try {\n    // Try Format Discovery Data (closest in execution path)\n    const formatData = $('Format Discovery Data').first().json;\n    if (formatData.userEmail) userEmail = formatData.userEmail;\n    if (formatData.query && !query) query = formatData.query;\n  } catch (e) {\n    try {\n      // Fallback to Security & Data Prep\n      const securityData = $('Security & Data Prep').first().json;\n      if (securityData.userEmail) userEmail = securityData.userEmail;\n      if (securityData.query && !query) query = securityData.query;\n    } catch (e2) {\n      console.log('Could not recover context:', e2);\n    }\n  }\n}\n\n// VALIDATION: If userEmail is still missing, skip storage to prevent DB error\nif (!userEmail || userEmail === 'unknown_user') {\n  console.warn('Check If Resolved: userEmail is missing or invalid, skipping storage');\n  return []; // Return empty array to skip Supabase insert\n}\n\n// Ensure all required fields are present\nif (!query) query = data.query || 'Unknown issue';\nif (!response) response = data.response || 'No solution recorded';\n\n// Final validation: Ensure all required fields are non-empty\nif (!userEmail || !query || !response) {\n  console.warn('Check If Resolved: Required fields missing, skipping storage');\n  return []; // Return empty array to skip Supabase insert\n}\n\n// Map to database schema (snake_case for Supabase)\n// Database expects: user_email, issue_description, solution, issue_type\nreturn [{\n  json: {\n    user_email: userEmail, // REQUIRED: Map camelCase to snake_case for Supabase\n    issue_description: query, // REQUIRED: Map query to issue_description\n    solution: response, // REQUIRED: Map response to solution\n    issue_type: data.insights?.issueType || null, // Optional: Map issueType\n    // Preserve other fields for reference\n    userEmail: userEmail,\n    query: query,\n    response: response,\n    insights: data.insights,\n    shouldStore: true\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        -208
+      ],
+      "id": "f910af41-3543-424e-be5c-8798f90c8c22",
+      "name": "Check If Resolved"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Analyze conversation for learning insights\nconst items = $input.all();\nif (items.length === 0) return [{ json: {} }];\n\n// Get data from Universal Formatter (which now includes context)\nconst formatterData = items[0].json;\nconst response = (formatterData.response || \"\").toLowerCase();\nconst query = (formatterData.query || \"\").toLowerCase();\nconst userEmail = formatterData.userEmail || null;\n\n// Extract insights\nconst insights = {\n  issueType: null,\n  wasResolved: response.includes('resolved') || response.includes('fixed') || response.includes('solved'),\n  kbUsed: response.includes('knowledge') || response.includes('article'),\n  ticketCreated: response.includes('incident') || response.includes('ticket') || response.includes('created'),\n  userSatisfaction: null // Could be extracted from follow-up or survey\n};\n\n// Detect issue type from query\nif (query.match(/password|login|access|credential/i)) insights.issueType = 'authentication';\nelse if (query.match(/printer|print/i)) insights.issueType = 'hardware';\nelse if (query.match(/email|outlook|mail/i)) insights.issueType = 'email';\nelse if (query.match(/network|wifi|internet|connection/i)) insights.issueType = 'network';\nelse if (query.match(/software|application|app|program/i)) insights.issueType = 'software';\n\n// Merge all data: context from formatter + response + insights\nreturn [{\n  json: {\n    ...formatterData, // userEmail, query, sessionId, response, etc.\n    insights: insights\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        -208
+      ],
+      "id": "ab243108-f260-4ca8-973f-c97733dac22b",
+      "name": "Analyze Conversation"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Store discovery data with timestamp for caching\nconst items = $input.all();\nif (items.length === 0) return [{ json: { error: \"No data\" } }];\n\nconst data = items[0].json;\n\nreturn [{\n  json: {\n    ...data,\n    lastDiscoveryFetch: Date.now(),\n    cachedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -832,
+        -32
+      ],
+      "id": "331991f7-9b53-4009-8614-f02325acb846",
+      "name": "Cache Discovery Data"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if discovery data is cached (1 hour TTL)\nconst items = $input.all();\nif (items.length === 0) return [{ json: { useCache: false } }];\n\nconst data = items[0].json;\nconst cacheKey = 'ivanti_discovery_cache';\nconst cacheTTL = 3600000; // 1 hour in milliseconds\n\n// Try to get from Redis or check timestamp\n// For now, we'll use a simple approach: always fetch if > 1 hour since last fetch\n// In production, use Redis or database cache\n\n// This is a placeholder - in real implementation, check Redis/database\nconst lastFetch = data.lastDiscoveryFetch || 0;\nconst now = Date.now();\nconst useCache = (now - lastFetch) < cacheTTL;\n\nreturn [{\n  json: {\n    ...data,\n    useCache: useCache,\n    cacheAge: useCache ? Math.floor((now - lastFetch) / 1000 / 60) : null // minutes\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1536,
+        -32
+      ],
+      "id": "d94b9a3c-12ab-48b2-83bb-00a7f99c58c3",
+      "name": "Check Discovery Cache"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "user_patterns"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -1744,
+        176
+      ],
+      "id": "070e8eac-f95c-4b2f-bcea-2bef829f0e01",
+      "name": "Load User Patterns",
+      "credentials": {
+        "supabaseApi": {
+          "id": "C9DU7WkG5rLShWM2",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "user_patterns",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "user_email",
+              "condition": "eq",
+              "keyValue": "={{ $json.user_email }}"
+            },
+            {
+              "keyName": "common_intent",
+              "condition": "eq",
+              "keyValue": "={{ $json.common_intent }}"
+            }
+          ]
+        },
+        "dataToSend": "autoMapInputData"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1712,
+        144
+      ],
+      "id": "b95694fd-d42f-4086-b060-ef36f3c9f9de",
+      "name": "Update User Patterns",
+      "credentials": {
+        "supabaseApi": {
+          "id": "C9DU7WkG5rLShWM2",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare user pattern data for upsert\nconst items = $input.all();\nif (items.length === 0) return [{ json: {} }];\n\nconst data = items[0].json;\nconst userEmail = data.user_email || data.userEmail;\nconst intent = data.route || 'unknown';\n\n// Try to get existing pattern to increment frequency\nlet existingPattern = null;\ntry {\n  const patterns = $('Load User Patterns').all();\n  existingPattern = patterns.find(p => \n    p.json.user_email === userEmail && p.json.common_intent === intent\n  );\n} catch (e) {\n  // If Load User Patterns hasn't run or failed, start with frequency 1\n}\n\n// Ensure frequency is a proper integer (not string)\nconst existingFreq = existingPattern ? (existingPattern.json.frequency || 1) : 1;\nconst newFrequency = parseInt(existingFreq, 10) + 1;\n\n// Output in database format for Supabase node\n// Ensure all types are correct: frequency as number, last_used as ISO string\nreturn [{\n  json: {\n    user_email: userEmail, // For matching/select condition\n    common_intent: intent, // For matching/select condition\n    frequency: newFrequency, // Value to update (explicitly as number)\n    last_used: new Date().toISOString() // Update timestamp\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1536,
+        144
+      ],
+      "id": "80839a79-a332-4890-9398-ac3d14c87418",
+      "name": "Prepare Pattern Data"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "conversation_history"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -1744,
+        368
+      ],
+      "id": "a2c90371-6cfe-4d1c-b1fc-8ef5d17794ad",
+      "name": "Load User History",
+      "credentials": {
+        "supabaseApi": {
+          "id": "C9DU7WkG5rLShWM2",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "conversation_history",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "user_email",
+              "fieldValue": "={{ $json.user_email }}"
+            },
+            {
+              "fieldId": "session_id",
+              "fieldValue": "={{ $json.session_id }}"
+            },
+            {
+              "fieldId": "message_role",
+              "fieldValue": "={{ $json.message_role }}"
+            },
+            {
+              "fieldId": "message_content",
+              "fieldValue": "={{ $json.message_content }}"
+            },
+            {
+              "fieldId": "ticket_id",
+              "fieldValue": "={{ $json.ticket_id }}"
+            },
+            {
+              "fieldId": "intent",
+              "fieldValue": "={{ $json.intent }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        144
+      ],
+      "id": "c553ed7b-a017-4d75-97d2-f15dda294733",
+      "name": "Store AI Response",
+      "credentials": {
+        "supabaseApi": {
+          "id": "C9DU7WkG5rLShWM2",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format AI response for Supabase storage\n// Universal Formatter already provides all needed fields\nconst items = $input.all();\nif (items.length === 0) return [];\n\nconst data = items[0].json;\n\n// Extract AI response (Universal Formatter outputs 'response' field)\nconst aiResponse = data.response || data.message_content || data.text || data.output || '';\n\n// Use data directly from Universal Formatter (it already has user_email, session_id, etc.)\n// Universal Formatter outputs both camelCase and snake_case, prefer snake_case for Supabase\nconst userEmail = data.user_email || data.userEmail;\nconst sessionId = data.session_id || data.sessionId;\nconst userContext = data.userContext;\nconst route = data.route;\n\n// VALIDATION: Skip if required fields are missing\nif (!userEmail || !sessionId || !aiResponse) {\n  console.warn('Format AI Response: Missing required fields:', {\n    userEmail: !!userEmail,\n    sessionId: !!sessionId,\n    aiResponse: !!aiResponse,\n    dataKeys: Object.keys(data)\n  });\n  return [];\n}\n\n// Map to database schema (snake_case for Supabase)\n// conversation_history expects: user_email, session_id, message_role, message_content, ticket_id, intent\nreturn [{\n  json: {\n    user_email: userEmail,\n    session_id: sessionId,\n    message_role: 'assistant',\n    message_content: aiResponse,\n    ticket_id: userContext?.ticketId || null,\n    intent: route || null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        144
+      ],
+      "id": "0753c331-8f7c-4100-81cb-7485d08008c0",
+      "name": "Format AI Response"
+    },
+    {
+      "parameters": {
+        "tableId": "conversation_history",
+        "dataToSend": "autoMapInputData"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        320
+      ],
+      "id": "5a3da2d6-57f8-4c5f-bf3f-6f13a1d78516",
+      "name": "Store User Message",
+      "credentials": {
+        "supabaseApi": {
+          "id": "C9DU7WkG5rLShWM2",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format user message for Supabase storage\n// Universal Formatter provides context, but we need the original query\nconst items = $input.all();\nif (items.length === 0) return [];\n\nconst data = items[0].json;\n\n// Use data directly from Universal Formatter (it preserves query, userEmail, sessionId)\n// Universal Formatter outputs both camelCase and snake_case, prefer snake_case for Supabase\nconst userEmail = data.user_email || data.userEmail;\nconst sessionId = data.session_id || data.sessionId;\nconst query = data.query || data.message_content || '';\nconst userContext = data.userContext;\nconst route = data.route;\n\n// VALIDATION: Skip if required fields are missing\nif (!userEmail || !sessionId || !query) {\n  console.warn('Format User Message: Missing required fields:', {\n    userEmail: !!userEmail,\n    sessionId: !!sessionId,\n    query: !!query,\n    dataKeys: Object.keys(data)\n  });\n  return [];\n}\n\n// Map to database schema (snake_case for Supabase)\n// conversation_history expects: user_email, session_id, message_role, message_content, ticket_id, intent\nreturn [{\n  json: {\n    user_email: userEmail,\n    session_id: sessionId,\n    message_role: 'user',\n    message_content: query,\n    ticket_id: userContext?.ticketId || null,\n    intent: route || null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        320
+      ],
+      "id": "5a1711cf-f488-4104-bcce-2d2ec5ae472f",
+      "name": "Format User Message"
+    },
+    {
+      "parameters": {
+        "jsCode": "// FAST PATH ROUTER - Skip heavy processing for simple queries\nconst items = $input.all();\nif (items.length === 0) return [{ json: { error: \"No data\" } }];\n\nconst data = items[0].json;\nconst forcedIntent = data.forcedIntent;\nconst query = (data.query || \"\").toLowerCase().trim();\n\n// Fast path conditions:\n// 1. forcedIntent is 'lookup' or 'my_tickets'\n// 2. OR query is clearly a simple ticket lookup\nconst isFastPath = forcedIntent === 'lookup' || forcedIntent === 'my_tickets' ||\n                   query.match(/^(show|check|list|my|what).*ticket/i) ||\n                   query.match(/^status.*inc-/i) ||\n                   query.match(/^where.*request/i);\n\nreturn [{\n  json: {\n    ...data,\n    useFastPath: isFastPath,\n    routeIntent: forcedIntent || (isFastPath ? 'auto_fast' : null)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1744,
+        -32
+      ],
+      "id": "ccbee7e2-d299-4be9-b1c6-6e8f88372dfa",
+      "name": "Fast Path Check"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Google Gemini Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Summarizer",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Router Output": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook - Ivanti AI": {
+      "main": [
+        [
+          {
+            "node": "Security & Data Prep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Security & Data Prep": {
+      "main": [
+        [
+          {
+            "node": "Load User Patterns",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load User History",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fast Path Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discover Service Request Offerings": {
+      "main": [
+        [
+          {
+            "node": "Format Discovery Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discover Priorities": {
+      "main": [
+        [
+          {
+            "node": "Format Discovery Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discover Categories": {
+      "main": [
+        [
+          {
+            "node": "Format Discovery Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Discovery Data": {
+      "main": [
+        [
+          {
+            "node": "Cache Discovery Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Parse Router Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Summarizer": {
+      "main": [
+        [
+          {
+            "node": "Universal Formatter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "firecrawl_search": {
+      "ai_tool": [
+        [
+          {
+            "node": "Smart Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ivanti_metadata": {
+      "ai_tool": [
+        [
+          {
+            "node": "Smart Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "create_kb_article": {
+      "ai_tool": [
+        [
+          {
+            "node": "Smart Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get tickets agent": {
+      "ai_tool": [
+        [
+          {
+            "node": "Smart Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get_user_details": {
+      "ai_tool": [
+        [
+          {
+            "node": "Smart Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "kb_search": {
+      "ai_tool": [
+        [
+          {
+            "node": "Smart Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Smart Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Smart Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smart Agent": {
+      "main": [
+        [
+          {
+            "node": "Universal Formatter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Fast Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get User ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Smart Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fast Lookup": {
+      "main": [
+        [
+          {
+            "node": "AI Summarizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get User ID": {
+      "main": [
+        [
+          {
+            "node": "Get My Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get My Tickets": {
+      "main": [
+        [
+          {
+            "node": "AI Summarizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Universal Formatter": {
+      "main": [
+        [
+          {
+            "node": "Generate Contextual Suggestions",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Analyze Conversation",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Format AI Response",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Format User Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Contextual Suggestions": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check If Resolved": {
+      "main": [
+        [
+          {
+            "node": "Store Solved Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Conversation": {
+      "main": [
+        [
+          {
+            "node": "Check If Resolved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cache Discovery Data": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Discovery Cache": {
+      "main": [
+        [
+          {
+            "node": "Discover Service Request Offerings",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Discover Priorities",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Discover Categories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Pattern Data": {
+      "main": [
+        [
+          {
+            "node": "Update User Patterns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store AI Response": {
+      "main": [
+        [
+          {
+            "node": "Prepare Pattern Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format AI Response": {
+      "main": [
+        [
+          {
+            "node": "Store AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store User Message": {
+      "main": [
+        [
+          {
+            "node": "Store AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format User Message": {
+      "main": [
+        [
+          {
+            "node": "Store User Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fast Path Check": {
+      "main": [
+        [
+          {
+            "node": "Check Discovery Cache",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1a24cea4-41b9-4832-aa9b-787fae411aa3",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "d01a6a8c11890acdbdc9cdddc68985eaa48ca0323d040fb817e6a87a3e72b287"
+  },
+  "id": "hBldB06ZLVVXwlSQ",
+  "tags": []
+}
