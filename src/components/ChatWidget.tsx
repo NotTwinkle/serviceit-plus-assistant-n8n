@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Send, ChevronDown, Settings, ChevronRight, Mail, Palette } from 'lucide-react';
+import { X, Send, Settings, ChevronRight, Mail, Palette } from 'lucide-react';
 import { Theme, DEFAULT_THEME, THEME_STORAGE_KEY } from '../types/theme';
 import ThemeEditor from './ThemeEditor';
 import { getTicketRecId } from '../content/utils/contextExtraction';
@@ -19,13 +19,34 @@ interface UserInfo {
   location?: string;
 }
 
+interface Suggestion {
+  id: string;
+  label: string;
+  prompt: string;
+  icon?: string;
+  priority?: number;
+}
+
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
   // Optional structured payload for rich cards/actions
-  metadata?: any;
+  metadata?: {
+    templateId?: string; // ID of the template button that was clicked
+    templateAction?: string; // Action type (e.g., 'view_tickets', 'create_incident')
+    requiresFollowUp?: boolean; // Whether this prompt needs follow-up questions
+    context?: Record<string, any>; // Additional context for the AI
+  };
+  // Contextual suggestions (adaptive quick actions)
+  suggestions?: Suggestion[];
+  // Token usage for this message exchange
+  tokenUsage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
 }
 
 // Serializable version of Message for storage (Date becomes ISO string)
@@ -163,6 +184,53 @@ const buildThinkingStatusSteps = (
   return steps;
 };
 
+// Template prompts for quick actions
+interface PromptTemplate {
+  id: string;
+  label: string;
+  prompt: string;
+  icon?: string;
+}
+
+const PROMPT_TEMPLATES: PromptTemplate[] = [
+  {
+    id: 'view-tickets',
+    label: 'Show all tickets',
+    prompt: 'Show me all my open tickets',
+    icon: '📋',
+  },
+  {
+    id: 'solve-problem',
+    label: 'I want to solve a problem',
+    prompt: 'I want to solve a problem. Can you help me?',
+    icon: '🔧',
+  },
+  {
+    id: 'create-incident',
+    label: 'Create new incident',
+    prompt: 'I need to create a new incident. What information do you need?',
+    icon: '➕',
+  },
+  {
+    id: 'search-kb',
+    label: 'Search knowledge base',
+    prompt: 'Search the knowledge base for',
+    icon: '🔍',
+  },
+  {
+    id: 'check-status',
+    label: 'Check ticket status',
+    prompt: 'What is the status of my tickets?',
+    icon: '📊',
+  },
+  {
+    id: 'get-help',
+    label: 'I need help',
+    prompt: 'I need help with',
+    icon: '❓',
+  },
+];
+
 const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -178,17 +246,20 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
   const [isHidden, setIsHidden] = useState(false);
   const [isHovering, setIsHovering] = useState(false);
   const [widgetWidth, setWidgetWidth] = useState(384); // Default: 384px (w-96)
-  // Default to Flash Lite for highest quota (best for free tier)
-  const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash-lite');
-  const [aiProvider, setAiProvider] = useState<'gemini' | 'ollama' | 'grok'>('gemini');
-  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
-  const modelDropdownRef = useRef<HTMLDivElement>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isWidgetWidthExpanded, setIsWidgetWidthExpanded] = useState(false);
   const [isExportChatExpanded, setIsExportChatExpanded] = useState(false);
   const [theme, setTheme] = useState<Theme>(DEFAULT_THEME);
   const [isThemeEditorOpen, setIsThemeEditorOpen] = useState(false);
   const [tempTheme, setTempTheme] = useState<Theme>(DEFAULT_THEME); // Temporary theme for editing
+
+  // Token usage tracking state
+  const [tokenStats, setTokenStats] = useState<{
+    conversationTotal: number;
+    contextUsagePercentage: number;
+    globalTotal: number;
+  } | null>(null);
+  const [isTokenStatsExpanded, setIsTokenStatsExpanded] = useState(false);
 
   // Pending Service Request confirmation state
   const [pendingServiceRequest, setPendingServiceRequest] = useState<{
@@ -274,10 +345,18 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
       });
 
       if (!response || !response.success) {
-        const errorMessage = response?.error || 'Failed to create service request';
+        // Log technical details to console (for developers/debugging)
+        console.error('[ChatWidget] ❌ Service request creation failed:', {
+          response: response,
+          error: response?.error,
+          missingFields: response?.missingFields,
+          timestamp: new Date().toISOString()
+        });
+        
+        const errorMessage = response?.error || 'Unable to create your request. Please try again.';
         const missingFields = response?.missingFields || [];
         
-        // Show error in the form
+        // Show error in the form (user-friendly)
         setPendingServiceRequest(prev =>
           prev
             ? {
@@ -325,49 +404,27 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
       setMessages(prev => [...prev, successMessage]);
       setPendingServiceRequest(null);
     } catch (error: any) {
-      console.error('Error confirming service request:', error);
+      // Log technical details to console (for developers/debugging)
+      console.error('[ChatWidget] ❌ Error confirming service request:', {
+        error: error,
+        message: error?.message,
+        name: error?.name,
+        stack: error?.stack,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Show user-friendly error message
       setPendingServiceRequest(prev =>
         prev
           ? {
               ...prev,
-              error: error?.message || 'Error confirming service request',
+              error: 'Unable to submit your request. Please try again.',
             }
           : prev
       );
     }
   };
 
-  // Available Gemini models
-  const geminiModels = [
-    { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite', description: 'Lightweight, highest quota (best for free tier)' },
-    { value: 'gemini-2.0-flash-live', label: 'Gemini 2.0 Flash Live', description: 'Live model, high quota' },
-    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', description: 'Fast, higher quota (recommended)' },
-    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', description: 'Most capable, 50/day limit (free tier)' },
-    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash', description: 'Previous generation Flash' },
-    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro', description: 'Previous generation Pro' },
-  ];
-
-  // Available Ollama models (matching what you have installed)
-  const ollamaModels = [
-    { value: 'llama3:latest', label: 'Llama 3 (Latest)', description: 'Latest Llama 3 - Recommended' },
-    { value: 'llama3.2', label: 'Llama 3.2', description: 'Llama 3.2' },
-    { value: 'llama3.1', label: 'Llama 3.1', description: 'Llama 3.1' },
-    { value: 'llama3', label: 'Llama 3', description: 'Llama 3 (base)' },
-    { value: 'mistral:latest', label: 'Mistral (Latest)', description: 'Latest Mistral model' },
-    { value: 'mistral', label: 'Mistral', description: 'Mistral 7B' },
-    { value: 'qwen2.5', label: 'Qwen 2.5', description: 'Qwen 2.5' },
-    { value: 'phi3', label: 'Phi-3', description: 'Phi-3' },
-  ];
-
-  // Available xAI Grok models
-  const grokModels = [
-    { value: 'grok-beta', label: 'Grok Beta', description: 'Latest Grok model - FREE ⚡' },
-    { value: 'grok-2', label: 'Grok 2', description: 'Grok 2 (stable)' },
-    { value: 'grok-vision-beta', label: 'Grok Vision Beta', description: 'Grok with vision capabilities' },
-  ];
-
-  // Models are shown in separate sections in the dropdown
-  // The provider is auto-detected when a model is selected
  
   // Load theme from storage on mount
   useEffect(() => {
@@ -395,104 +452,43 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
     chrome.storage.local.set({ [THEME_STORAGE_KEY]: theme });
   }, [theme]);
 
-  // Load AI provider from config and storage
+  // Load settings from storage
   useEffect(() => {
-    // Get provider from storage or default to gemini
-    chrome.storage.local.get(['aiProvider', 'aiAssistantHidden', 'chatWidgetWidth', 'selectedAIModel'], (result) => {
-      // Determine provider: check storage first, then infer from model, then default to gemini
-      let provider: 'gemini' | 'ollama' | 'grok' = 'gemini';
-      
-      if (result.aiProvider) {
-        provider = (result.aiProvider.toLowerCase() as 'gemini' | 'ollama' | 'grok') || 'gemini';
-      } else if (result.selectedAIModel) {
-        // Infer provider from model name if provider not set
-        const grokModelPatterns = ['grok'];
-        const ollamaModelPatterns = ['llama3', 'mistral', 'qwen', 'phi3'];
-        if (grokModelPatterns.some(pattern => result.selectedAIModel.includes(pattern))) {
-          provider = 'grok';
-        } else if (ollamaModelPatterns.some(pattern => result.selectedAIModel.includes(pattern))) {
-          provider = 'ollama';
-        }
-      }
-      
-      setAiProvider(provider);
-
+    chrome.storage.local.get(['aiAssistantHidden', 'chatWidgetWidth'], (result) => {
       if (result.aiAssistantHidden === true) {
         setIsHidden(true);
       }
       if (result.chatWidgetWidth) {
         setWidgetWidth(result.chatWidgetWidth);
       }
-      
-      // Model selection based on provider
-      const validGeminiModels = [
-        'gemini-2.5-flash-lite', 'gemini-2.0-flash-live', 'gemini-2.5-flash', 
-        'gemini-2.5-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'
-      ];
-      const validOllamaModels = [
-        'llama3:latest', 'llama3.2', 'llama3.1', 'llama3', 
-        'mistral:latest', 'mistral', 'qwen2.5', 'phi3'
-      ];
-      
-      if (result.selectedAIModel) {
-        if (provider === 'ollama') {
-          // Ollama models - also check if model name matches (without :latest suffix)
-          const modelMatches = validOllamaModels.includes(result.selectedAIModel) ||
-            validOllamaModels.some(m => m.replace(':latest', '') === result.selectedAIModel.replace(':latest', ''));
-          
-          if (modelMatches) {
-            // Use the stored model, or find the :latest version if available
-            const storedModel = result.selectedAIModel;
-            const latestVersion = validOllamaModels.find(m => m === storedModel || m.replace(':latest', '') === storedModel.replace(':latest', ''));
-            setSelectedModel(latestVersion || storedModel);
-          } else {
-            // Invalid or Gemini model - default to llama3:latest
-            setSelectedModel('llama3:latest');
-            chrome.storage.local.set({ selectedAIModel: 'llama3:latest' });
-          }
-        } else {
-          // Gemini models
-          if (validGeminiModels.includes(result.selectedAIModel)) {
-            // MIGRATION: Migrate Pro models to Flash Lite for best quota
-            if (result.selectedAIModel === 'gemini-2.5-pro' || result.selectedAIModel === 'gemini-1.5-pro') {
-              console.log('🔄 Migrating from Pro to Flash Lite model for best quota');
-              setSelectedModel('gemini-2.5-flash-lite');
-              chrome.storage.local.set({ selectedAIModel: 'gemini-2.5-flash-lite' });
-            } 
-            // MIGRATION: Migrate regular Flash to Flash Lite for even better quota
-            else if (result.selectedAIModel === 'gemini-2.5-flash' || result.selectedAIModel === 'gemini-1.5-flash') {
-              console.log('🔄 Migrating from Flash to Flash Lite model for best quota');
-              setSelectedModel('gemini-2.5-flash-lite');
-              chrome.storage.local.set({ selectedAIModel: 'gemini-2.5-flash-lite' });
-            } else {
-              // Keep Flash Lite or Flash Live if already selected
-              setSelectedModel(result.selectedAIModel);
-            }
-          } else {
-            // Invalid model stored, reset to Flash Lite
-            setSelectedModel('gemini-2.5-flash-lite');
-            chrome.storage.local.set({ selectedAIModel: 'gemini-2.5-flash-lite' });
-          }
-        }
-      } else {
-        // No stored preference - set default based on provider
-        const defaultModel = provider === 'ollama' ? 'llama3:latest' : 'gemini-2.5-flash-lite';
-        setSelectedModel(defaultModel);
-        chrome.storage.local.set({ selectedAIModel: defaultModel });
-      }
     });
   }, []);
 
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (modelDropdownRef.current && !modelDropdownRef.current.contains(event.target as Node)) {
-        setIsModelDropdownOpen(false);
+  // Refresh token stats
+  const refreshTokenStats = async () => {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'GET_TOKEN_STATS'
+      });
+      
+      if (response && response.success) {
+        setTokenStats({
+          conversationTotal: response.conversation?.totalTokens || 0,
+          contextUsagePercentage: response.conversation?.contextUsagePercentage || 0,
+          globalTotal: response.global?.totalTokens || 0,
+        });
       }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    } catch (error) {
+      console.warn('ChatWidget: Could not fetch token stats:', error);
+    }
+  };
+
+  // Load token stats on mount and when chat opens
+  useEffect(() => {
+    if (isOpen && currentUser) {
+      refreshTokenStats();
+    }
+  }, [isOpen, currentUser]);
 
   // Auto-focus input and scroll to bottom when chat opens
   useEffect(() => {
@@ -518,11 +514,6 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
     }
   }, [widgetWidth]);
 
-  // Save selected model to storage when it changes
-  useEffect(() => {
-    chrome.storage.local.set({ selectedAIModel: selectedModel });
-  }, [selectedModel]);
-
   // Get storage key for current user's conversation history
   const getConversationStorageKey = (): string | null => {
     if (!currentUser) return null;
@@ -541,8 +532,8 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
     return chrome.runtime.getURL(theme.logo); // Extension path
   };
 
-  // Helper function to create welcome message
-  const createWelcomeMessage = () => {
+  // Helper function to create welcome message with adaptive greeting
+  const createWelcomeMessage = async () => {
     if (!currentUser) return;
     
     const userName = currentUser?.fullName || currentUser?.loginId || 'there';
@@ -550,12 +541,64 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
     const params = new URLSearchParams(window.location.search);
     const recId = params.get('RecId');
     
+    // If we're on a specific ticket page, use ticket-specific greeting
+    if (recId) {
     const welcomeMessage: Message = {
       id: '1',
       role: 'assistant',
-      content: recId
-        ? `Hello ${userName}${userContext}! 👋 I'm here to assist you with Ticket #${recId}. How can I help you today?`
-        : `Hello ${userName}${userContext}! 👋 I'm here to help you with Ivanti. What would you like to do today?`,
+        content: `Hello ${userName}${userContext}! 👋 I'm here to assist you with Ticket #${recId}. How can I help you today?`,
+        timestamp: new Date(),
+      };
+      setMessages([welcomeMessage]);
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+      }, 100);
+      return;
+    }
+    
+    // Fetch active tickets count for adaptive greeting
+    let ticketCount = 0;
+    let ticketDetails = '';
+    
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'GET_ACTIVE_TICKETS'
+      });
+      
+      if (response && response.success) {
+        ticketCount = response.totalCount || 0;
+        const incidentCount = response.incidentCount || 0;
+        const serviceRequestCount = response.serviceRequestCount || 0;
+        
+        // Build detailed ticket information
+        if (ticketCount > 0) {
+          const parts: string[] = [];
+          if (incidentCount > 0) {
+            parts.push(`${incidentCount} incident${incidentCount !== 1 ? 's' : ''}`);
+          }
+          if (serviceRequestCount > 0) {
+            parts.push(`${serviceRequestCount} service request${serviceRequestCount !== 1 ? 's' : ''}`);
+          }
+          ticketDetails = parts.join(' and ');
+        }
+      }
+    } catch (error) {
+      console.warn('ChatWidget: Could not fetch active tickets for greeting:', error);
+      // Continue with generic greeting if fetch fails
+    }
+    
+    // Create adaptive greeting based on ticket count
+    let greeting = '';
+    if (ticketCount > 0) {
+      greeting = `Hello ${userName}${userContext}! 👋 You have ${ticketCount} active ${ticketCount === 1 ? 'ticket' : 'tickets'} (${ticketDetails}). How can I help you with them today?`;
+    } else {
+      greeting = `Hello ${userName}${userContext}! 👋 I'm here to help you with Ivanti. What would you like to do today?`;
+    }
+    
+    const welcomeMessage: Message = {
+      id: '1',
+      role: 'assistant',
+      content: greeting,
       timestamp: new Date(),
     };
     
@@ -774,6 +817,135 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
     };
   }, [isLoading, thinkingSteps]);
 
+  // Handle template prompt button click
+  const handleTemplateClick = (template: PromptTemplate) => {
+    // Determine if this prompt requires follow-up (incomplete prompts)
+    const requiresFollowUp = template.prompt.endsWith('for') || 
+                            template.prompt.endsWith('with') ||
+                            template.id === 'get-help' ||
+                            template.id === 'search-kb';
+    
+    // Create a user message with template metadata
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: template.prompt,
+      timestamp: new Date(),
+      metadata: {
+        templateId: template.id,
+        templateAction: template.id.replace('-', '_'),
+        requiresFollowUp: requiresFollowUp,
+        context: {
+          actionType: template.id,
+          source: 'template_button',
+        },
+      },
+    };
+
+    // Add message to conversation immediately (UI feedback)
+    setMessages(prev => [...prev, userMessage]);
+    
+    // Clear input
+    setInputValue('');
+    
+    // Send message immediately with context (user message already added above)
+    sendMessageWithTemplate(template, requiresFollowUp);
+  };
+
+  // Send message with template context
+  const sendMessageWithTemplate = async (template: PromptTemplate, requiresFollowUp: boolean) => {
+    if (isLoading) return;
+
+    // Build thinking steps (use current messages length)
+    const steps = buildThinkingStatusSteps(template.prompt, ticketId, messages.length);
+    
+    // Set loading state
+    setIsLoading(true);
+    setThinkingStepObjects(steps);
+    setThinkingSteps(steps.map(s => s.text));
+    setThinkingStepIndex(0);
+    
+    // Scroll to show thinking indicator
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
+
+    try {
+      // Send message to background script with template metadata
+      const response = await Promise.race([
+        chrome.runtime.sendMessage({
+          type: 'SEND_MESSAGE',
+          message: template.prompt,
+          ticketId: ticketId,
+          currentUser: currentUser,
+          timestamp: new Date().toISOString(),
+          templateContext: {
+            templateId: template.id,
+            templateAction: template.id.replace('-', '_'),
+            requiresFollowUp: requiresFollowUp,
+            actionType: template.id,
+          },
+        }),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Request timeout')), 90000)
+        )
+      ]) as any;
+
+      if (!response || !response.success) {
+        throw new Error(response?.error || 'Failed to send message');
+      }
+
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: response.message || 'No response from AI',
+        timestamp: new Date(),
+        tokenUsage: response.tokenUsage ? {
+          inputTokens: response.tokenUsage.inputTokens || 0,
+          outputTokens: response.tokenUsage.outputTokens || 0,
+          totalTokens: response.tokenUsage.totalTokens || 0,
+        } : undefined,
+      };
+      
+      setMessages(prev => [...prev, assistantMessage]);
+
+      // Update token stats if provided
+      if (response.tokenUsage) {
+        setTokenStats({
+          conversationTotal: response.tokenUsage.conversationTotal || 0,
+          contextUsagePercentage: response.tokenUsage.contextUsagePercentage || 0,
+          globalTotal: tokenStats?.globalTotal || 0,
+        });
+        
+        // Refresh global stats
+        refreshTokenStats();
+      }
+    } catch (error: any) {
+      // Log technical details to console (for developers/debugging)
+      console.error('[ChatWidget] ❌ Error sending template message:', {
+        error: error,
+        message: error.message,
+        name: error.name,
+        stack: error.stack,
+        template: template.label,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Show user-friendly error message (no technical details)
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: 'Sorry, I encountered an issue processing your request. Please try again.',
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+      setThinkingSteps([]);
+      setThinkingStepIndex(0);
+    }
+  };
+
   const sendMessage = async () => {
     if (!inputValue.trim() || isLoading) return;
 
@@ -812,7 +984,6 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
           ticketId: ticketId,
           currentUser: currentUser, // Pass current user context
           timestamp: userMessage.timestamp.toISOString(),
-          model: selectedModel, // Pass selected AI model
         }),
         new Promise((_, reject) => 
           setTimeout(() => reject(new Error('Request timeout: AI response took too long. This might be due to rate limiting or network issues. Please try again.')), 90000)
@@ -828,9 +999,27 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
         role: 'assistant',
         content: response.message || 'I received your message.',
         timestamp: new Date(),
+        suggestions: response.suggestions || [], // Add contextual suggestions from n8n
+        tokenUsage: response.tokenUsage ? {
+          inputTokens: response.tokenUsage.inputTokens || 0,
+          outputTokens: response.tokenUsage.outputTokens || 0,
+          totalTokens: response.tokenUsage.totalTokens || 0,
+        } : undefined,
       };
 
       setMessages(prev => [...prev, assistantMessage]);
+
+      // Update token stats if provided
+      if (response.tokenUsage) {
+        setTokenStats({
+          conversationTotal: response.tokenUsage.conversationTotal || 0,
+          contextUsagePercentage: response.tokenUsage.contextUsagePercentage || 0,
+          globalTotal: tokenStats?.globalTotal || 0, // Keep existing global total
+        });
+        
+        // Refresh global stats
+        refreshTokenStats();
+      }
 
       // ✅ If agent provided thinking steps, show them
       if (response.thinkingSteps && response.thinkingSteps.length > 0) {
@@ -899,14 +1088,30 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
       }
 
     } catch (error: any) {
-      console.error('Error sending message:', error);
+      // Log technical details to console (for developers/debugging)
+      console.error('[ChatWidget] ❌ Error sending message:', {
+        error: error,
+        message: error.message,
+        name: error.name,
+        stack: error.stack,
+        timestamp: new Date().toISOString()
+      });
       
-      // Show detailed error message for debugging
-      const errorText = error?.message || error?.toString() || 'Unknown error';
+      // Show user-friendly error message (no technical details)
+      let userFriendlyMessage = 'Sorry, I encountered an issue. Please try again.';
+      
+      if (error?.message?.includes('too long') || error?.message?.includes('timeout')) {
+        userFriendlyMessage = '⏱️ This is taking longer than expected. Please try again in a moment.';
+      } else if (error?.message?.includes('connect') || error?.message?.includes('network')) {
+        userFriendlyMessage = '🌐 I\'m having trouble connecting right now. Please check your internet connection.';
+      } else if (error?.message?.includes('processing')) {
+        userFriendlyMessage = '⚠️ There was a problem processing your request. Please try again.';
+      }
+      
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: `⚠️ AI service error: ${errorText}\n\nPlease check:\n1. Your Gemini API key is valid\n2. Your API key has access to the selected model\n3. Check the browser console for detailed logs`,
+        content: userFriendlyMessage,
         timestamp: new Date(),
       };
 
@@ -1315,6 +1520,47 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
               </div>
             </div>
             <div className="sit-flex sit-items-center sit-gap-2">
+              {/* Token Usage Indicator - Cursor-style */}
+              {tokenStats && tokenStats.contextUsagePercentage > 0 && (
+                <div
+                  className="sit-relative sit-group"
+                  style={{
+                    position: 'relative',
+                    cursor: 'pointer',
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsSettingsOpen(true);
+                    setIsTokenStatsExpanded(true);
+                  }}
+                  title={`${tokenStats.contextUsagePercentage.toFixed(1)}% context used`}
+                >
+                  <div
+                    className="sit-px-2 sit-py-1 sit-rounded-md sit-transition-all sit-duration-200"
+                    style={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                      backdropFilter: 'blur(8px)',
+                      fontSize: '11px',
+                      fontWeight: '500',
+                      color: '#ffffff',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      minWidth: '70px',
+                      justifyContent: 'center',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+                    }}
+                  >
+                    <span>{tokenStats.contextUsagePercentage.toFixed(1)}%</span>
+                    <span style={{ opacity: 0.7 }}>context</span>
+                  </div>
+                </div>
+              )}
               {/* Settings Button */}
               <button
                 onClick={(e) => {
@@ -1469,8 +1715,270 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
                   }}>
                     {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </span>
+                  
+                  {/* Contextual Suggestions - Show after assistant messages */}
+                  {message.role === 'assistant' && message.suggestions && message.suggestions.length > 0 && (
+                    <div className="sit-flex sit-flex-col sit-gap-2 sit-mt-3" style={{ 
+                      position: 'relative', 
+                      zIndex: 1,
+                      paddingLeft: message.role === 'assistant' ? '8px' : '0',
+                      paddingRight: message.role === 'assistant' ? '0' : '8px',
+                    }}>
+                      <div style={{
+                        fontSize: '12px',
+                        color: theme.colors.textMuted,
+                        fontWeight: 500,
+                        marginBottom: '4px',
+                      }}>
+                        Suggested actions:
+                      </div>
+                      <div className="sit-flex sit-flex-wrap sit-gap-2">
+                        {message.suggestions.map((suggestion) => (
+                          <button
+                            key={suggestion.id}
+                            onClick={async () => {
+                              // Send suggestion prompt as user message
+                              if (isLoading) return; // Prevent clicks while loading
+                              
+                              const userMessage: Message = {
+                                id: Date.now().toString(),
+                                role: 'user',
+                                content: suggestion.prompt,
+                                timestamp: new Date(),
+                              };
+                              
+                              // Add user message first
+                              setMessages(prev => [...prev, userMessage]);
+                              
+                              // Build thinking steps
+                              const steps = buildThinkingStatusSteps(suggestion.prompt, ticketId, messages.length);
+                              setIsLoading(true);
+                              setThinkingStepObjects(steps);
+                              setThinkingSteps(steps.map(s => s.text));
+                              setThinkingStepIndex(0);
+                              
+                              // Scroll to bottom
+                              setTimeout(() => {
+                                messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+                              }, 100);
+                              
+                              try {
+                                // Send message to background script
+                                const response = await Promise.race([
+                                  chrome.runtime.sendMessage({
+                                    type: 'SEND_MESSAGE',
+                                    message: suggestion.prompt,
+                                    ticketId: ticketId,
+                                    currentUser: currentUser,
+                                    timestamp: userMessage.timestamp.toISOString(),
+                                  }),
+                                  new Promise((_, reject) => 
+                                    setTimeout(() => reject(new Error('Request timeout')), 90000)
+                                  )
+                                ]) as any;
+                                
+                                if (!response || !response.success) {
+                                  throw new Error(response?.error || 'Failed to send message');
+                                }
+                                
+                                const assistantMessage: Message = {
+                                  id: (Date.now() + 1).toString(),
+                                  role: 'assistant',
+                                  content: response.message || 'I received your message.',
+                                  timestamp: new Date(),
+                                  suggestions: response.suggestions || [],
+                                  tokenUsage: response.tokenUsage ? {
+                                    inputTokens: response.tokenUsage.inputTokens || 0,
+                                    outputTokens: response.tokenUsage.outputTokens || 0,
+                                    totalTokens: response.tokenUsage.totalTokens || 0,
+                                  } : undefined,
+                                };
+                                
+                                setMessages(prev => [...prev, assistantMessage]);
+                                
+                                // Update token stats if provided
+                                if (response.tokenUsage) {
+                                  setTokenStats({
+                                    conversationTotal: response.tokenUsage.conversationTotal || 0,
+                                    contextUsagePercentage: response.tokenUsage.contextUsagePercentage || 0,
+                                    globalTotal: tokenStats?.globalTotal || 0,
+                                  });
+                                  refreshTokenStats();
+                                }
+                                
+                                // Handle thinking steps
+                                if (response.thinkingSteps && response.thinkingSteps.length > 0) {
+                                  const agentStepObjects = response.thinkingSteps.map((step: any) => ({
+                                    text: step.label,
+                                    status: step.status,
+                                    detail: step.detail,
+                                    error: step.error
+                                  }));
+                                  setThinkingStepObjects(agentStepObjects);
+                                }
+                                
+                                // Handle actions (service requests, etc.)
+                                if (response.actions && response.actions.length > 0) {
+                                  const srDraft = response.actions.find(
+                                    (a: any) =>
+                                      a.endpoint === 'ivanti://serviceRequest/draft' &&
+                                      a.body &&
+                                      a.body.subscriptionId &&
+                                      a.body.fieldset &&
+                                      Array.isArray(a.body.fieldset.fields)
+                                  );
+                                  
+                                  if (srDraft) {
+                                    const { subscriptionId, offeringName, fieldset, readyForConfirmation, missingRequiredFields } = srDraft.body;
+                                    const fields = fieldset.fields.map((f: any) => ({
+                                      name: f.name,
+                                      label: f.label,
+                                      required: !!f.required,
+                                      value: f.defaultValue ?? '',
+                                      options: f.options || undefined,
+                                    }));
+                                    
+                                    setPendingServiceRequest({
+                                      subscriptionId,
+                                      offeringName: offeringName || fieldset.name || 'Service Request',
+                                      fields,
+                                      error: readyForConfirmation === false && missingRequiredFields?.length 
+                                        ? `Please fill in ${missingRequiredFields.length} required field${missingRequiredFields.length > 1 ? 's' : ''} before submitting: ${missingRequiredFields.map((mf: any) => mf.label || mf.name).join(', ')}`
+                                        : undefined,
+                                      missingFields: missingRequiredFields || undefined,
+                                      readyForConfirmation: readyForConfirmation !== false,
+                                    });
+                                  }
+                                }
+                                
+                                setTimeout(() => {
+                                  messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+                                }, 100);
+                              } catch (error: any) {
+                                console.error('[ChatWidget] ❌ Error sending suggestion:', error);
+                                const errorMessage: Message = {
+                                  id: (Date.now() + 1).toString(),
+                                  role: 'assistant',
+                                  content: 'Sorry, I encountered an issue. Please try again.',
+                                  timestamp: new Date(),
+                                };
+                                setMessages(prev => [...prev, errorMessage]);
+                              } finally {
+                                setIsLoading(false);
+                                if (thinkingIntervalRef.current) {
+                                  window.clearInterval(thinkingIntervalRef.current);
+                                  thinkingIntervalRef.current = null;
+                                }
+                                setThinkingSteps([]);
+                                setThinkingStepObjects([]);
+                                setThinkingStepIndex(0);
+                              }
+                            }}
+                            className="sit-px-4 sit-py-2 sit-rounded-lg sit-border sit-transition-all sit-duration-200 sit-cursor-pointer sit-text-sm sit-font-medium suggestion-button"
+                            style={{
+                              backgroundColor: '#ffffff',
+                              borderColor: theme.colors.border,
+                              color: theme.colors.textPrimary,
+                              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+                              whiteSpace: 'nowrap',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.backgroundColor = theme.colors.primary;
+                              e.currentTarget.style.color = '#ffffff';
+                              e.currentTarget.style.borderColor = theme.colors.primary;
+                              e.currentTarget.style.transform = 'translateY(-1px)';
+                              e.currentTarget.style.boxShadow = '0 4px 12px rgba(0, 43, 92, 0.2)';
+                              const spans = e.currentTarget.querySelectorAll('span');
+                              spans.forEach(span => {
+                                (span as HTMLElement).style.color = '#ffffff';
+                              });
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.backgroundColor = '#ffffff';
+                              e.currentTarget.style.color = theme.colors.textPrimary;
+                              e.currentTarget.style.borderColor = theme.colors.border;
+                              e.currentTarget.style.transform = 'translateY(0)';
+                              e.currentTarget.style.boxShadow = '0 1px 3px rgba(0, 0, 0, 0.1)';
+                              const spans = e.currentTarget.querySelectorAll('span');
+                              spans.forEach(span => {
+                                (span as HTMLElement).style.color = '';
+                              });
+                            }}
+                          >
+                            {suggestion.icon && <span style={{ color: 'inherit' }}>{suggestion.icon}</span>}
+                            <span style={{ color: 'inherit' }}>{suggestion.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
+
+              {/* Template Prompt Buttons - Show only when there's just the welcome message */}
+              {messages.length === 1 && 
+               messages[0]?.role === 'assistant' && 
+               !isLoading && (
+                <div className="sit-flex sit-flex-col sit-gap-3 sit-mt-2" style={{ position: 'relative', zIndex: 1 }}>
+                  <div style={{
+                    fontSize: '12px',
+                    color: theme.colors.textMuted,
+                    fontWeight: 500,
+                    marginBottom: '4px',
+                  }}>
+                    Quick actions:
+                  </div>
+                  <div className="sit-flex sit-flex-wrap sit-gap-2">
+                    {PROMPT_TEMPLATES.map((template) => (
+                      <button
+                        key={template.id}
+                        onClick={() => handleTemplateClick(template)}
+                        className="sit-px-4 sit-py-2 sit-rounded-lg sit-border sit-transition-all sit-duration-200 sit-cursor-pointer sit-text-sm sit-font-medium template-button"
+                        style={{
+                          backgroundColor: '#ffffff',
+                          borderColor: theme.colors.border,
+                          color: theme.colors.textPrimary,
+                          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+                          whiteSpace: 'nowrap',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.backgroundColor = theme.colors.primary;
+                          e.currentTarget.style.color = '#ffffff';
+                          e.currentTarget.style.borderColor = theme.colors.primary;
+                          e.currentTarget.style.transform = 'translateY(-1px)';
+                          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0, 43, 92, 0.2)';
+                          // Ensure all child elements (icon and label) also turn white
+                          const spans = e.currentTarget.querySelectorAll('span');
+                          spans.forEach(span => {
+                            (span as HTMLElement).style.color = '#ffffff';
+                          });
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.backgroundColor = '#ffffff';
+                          e.currentTarget.style.color = theme.colors.textPrimary;
+                          e.currentTarget.style.borderColor = theme.colors.border;
+                          e.currentTarget.style.transform = 'translateY(0)';
+                          e.currentTarget.style.boxShadow = '0 1px 3px rgba(0, 0, 0, 0.1)';
+                          // Reset child elements color
+                          const spans = e.currentTarget.querySelectorAll('span');
+                          spans.forEach(span => {
+                            (span as HTMLElement).style.color = '';
+                          });
+                        }}
+                      >
+                        {template.icon && <span style={{ color: 'inherit' }}>{template.icon}</span>}
+                        <span style={{ color: 'inherit' }}>{template.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Pending Service Request confirmation card */}
               {pendingServiceRequest && (
@@ -1894,211 +2402,6 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
                   e.target.style.boxShadow = 'none';
                 }}
               />
-              {/* Model Selector Dropdown - Compact */}
-              <div className="sit-relative" ref={modelDropdownRef}>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsModelDropdownOpen(!isModelDropdownOpen);
-                  }}
-                  className="sit-w-10 sit-h-10 sit-rounded-xl sit-flex sit-items-center sit-justify-center sit-cursor-pointer sit-transition-all sit-duration-200 sit-border"
-                  style={{ 
-                    backgroundColor: '#ffffff',
-                    borderColor: theme.colors.border,
-                    color: '#6b7280',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = theme.colors.primary;
-                    e.currentTarget.style.color = theme.colors.primary;
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = theme.colors.border;
-                    e.currentTarget.style.color = theme.colors.textMuted;
-                  }}
-                  title={`AI Model: ${[...geminiModels, ...ollamaModels, ...grokModels].find(m => m.value === selectedModel)?.label || selectedModel} (${aiProvider === 'grok' ? 'Grok' : aiProvider === 'ollama' ? 'Ollama' : 'Gemini'})`}
-                  aria-label="Change AI model"
-                >
-                  <ChevronDown size={16} strokeWidth={2.5} />
-                </button>
-                
-                {/* Dropdown Menu */}
-                {isModelDropdownOpen && (
-                  <div
-                    className="sit-absolute sit-right-0 sit-mb-1 sit-rounded-lg sit-shadow-lg sit-overflow-hidden sit-z-50 model-dropdown-scroll"
-                    style={{
-                      backgroundColor: '#ffffff',
-                      border: '1px solid #e5e7eb',
-                      minWidth: '220px',
-                      maxHeight: '210px', // Show ~3 models (each ~70px tall)
-                      overflowY: 'auto',
-                      overflowX: 'hidden',
-                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-                      bottom: '100%',
-                      marginBottom: '4px',
-                      // Custom scrollbar styling (Firefox)
-                      scrollbarWidth: 'thin',
-                      scrollbarColor: '#cbd5e1 #f1f5f9',
-                    }}
-                    onScroll={(e) => {
-                      // Prevent click events from propagating when scrolling
-                      e.stopPropagation();
-                    }}
-                  >
-                    {/* Gemini Models Section */}
-                    <div style={{ padding: '8px 12px', fontSize: '11px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '1px solid #e5e7eb' }}>
-                      Google Gemini
-                    </div>
-                    {geminiModels.map((model) => (
-                      <button
-                        key={model.value}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedModel(model.value);
-                          setIsModelDropdownOpen(false);
-                          // Save model selection
-                          chrome.storage.local.set({ selectedAIModel: model.value });
-                          // Set provider to gemini
-                          setAiProvider('gemini');
-                          chrome.storage.local.set({ aiProvider: 'gemini' });
-                        }}
-                        className="sit-w-full sit-text-left sit-px-3 sit-py-2.5 sit-cursor-pointer sit-border-0 sit-transition-colors"
-                        style={{
-                          backgroundColor: selectedModel === model.value ? '#f3f4f6' : '#ffffff',
-                          color: '#1f2937',
-                          fontSize: '13px',
-                          borderBottom: '1px solid #f3f4f6',
-                        }}
-                        onMouseEnter={(e) => {
-                          if (selectedModel !== model.value) {
-                            e.currentTarget.style.backgroundColor = '#f9fafb';
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (selectedModel !== model.value) {
-                            e.currentTarget.style.backgroundColor = '#ffffff';
-                          }
-                        }}
-                      >
-                        <div className="sit-flex sit-items-center sit-justify-between">
-                          <div className="sit-flex sit-flex-col">
-                            <span style={{ fontWeight: selectedModel === model.value ? '600' : '500', fontSize: '13px' }}>
-                              {model.label}
-                            </span>
-                            <span style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>
-                              {model.description}
-                            </span>
-                          </div>
-                          {selectedModel === model.value && (
-                            <span style={{ color: '#002b5c', fontSize: '14px', fontWeight: '600' }}>✓</span>
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                    
-                    {/* Ollama Models Section */}
-                    <div style={{ padding: '8px 12px', fontSize: '11px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px', borderTop: '2px solid #e5e7eb', borderBottom: '1px solid #e5e7eb', marginTop: '4px' }}>
-                      Ollama (Local)
-                    </div>
-                    {ollamaModels.map((model) => (
-                      <button
-                        key={model.value}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedModel(model.value);
-                          setIsModelDropdownOpen(false);
-                          // Save model selection
-                          chrome.storage.local.set({ selectedAIModel: model.value });
-                          // Set provider to ollama
-                          setAiProvider('ollama');
-                          chrome.storage.local.set({ aiProvider: 'ollama' });
-                        }}
-                        className="sit-w-full sit-text-left sit-px-3 sit-py-2.5 sit-cursor-pointer sit-border-0 sit-transition-colors"
-                        style={{
-                          backgroundColor: selectedModel === model.value ? '#f3f4f6' : '#ffffff',
-                          color: '#1f2937',
-                          fontSize: '13px',
-                          borderBottom: '1px solid #f3f4f6',
-                        }}
-                        onMouseEnter={(e) => {
-                          if (selectedModel !== model.value) {
-                            e.currentTarget.style.backgroundColor = '#f9fafb';
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (selectedModel !== model.value) {
-                            e.currentTarget.style.backgroundColor = '#ffffff';
-                          }
-                        }}
-                      >
-                        <div className="sit-flex sit-items-center sit-justify-between">
-                          <div className="sit-flex sit-flex-col">
-                            <span style={{ fontWeight: selectedModel === model.value ? '600' : '500', fontSize: '13px' }}>
-                              {model.label}
-                            </span>
-                            <span style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>
-                              {model.description}
-                            </span>
-                          </div>
-                          {selectedModel === model.value && (
-                            <span style={{ color: '#002b5c', fontSize: '14px', fontWeight: '600' }}>✓</span>
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                    
-                    {/* Grok Models Section */}
-                    <div style={{ padding: '8px 12px', fontSize: '11px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px', borderTop: '2px solid #e5e7eb', borderBottom: '1px solid #e5e7eb', marginTop: '4px' }}>
-                      xAI Grok (Free)
-                    </div>
-                    {grokModels.map((model) => (
-                      <button
-                        key={model.value}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedModel(model.value);
-                          setIsModelDropdownOpen(false);
-                          // Save model selection
-                          chrome.storage.local.set({ selectedAIModel: model.value });
-                          // Set provider to grok
-                          setAiProvider('grok');
-                          chrome.storage.local.set({ aiProvider: 'grok' });
-                        }}
-                        className="sit-w-full sit-text-left sit-px-3 sit-py-2.5 sit-cursor-pointer sit-border-0 sit-transition-colors"
-                        style={{
-                          backgroundColor: selectedModel === model.value ? '#f3f4f6' : '#ffffff',
-                          color: '#1f2937',
-                          fontSize: '13px',
-                          borderBottom: '1px solid #f3f4f6',
-                        }}
-                        onMouseEnter={(e) => {
-                          if (selectedModel !== model.value) {
-                            e.currentTarget.style.backgroundColor = '#f9fafb';
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (selectedModel !== model.value) {
-                            e.currentTarget.style.backgroundColor = '#ffffff';
-                          }
-                        }}
-                      >
-                        <div className="sit-flex sit-items-center sit-justify-between">
-                          <div className="sit-flex sit-flex-col">
-                            <span style={{ fontWeight: selectedModel === model.value ? '600' : '500', fontSize: '13px' }}>
-                              {model.label}
-                            </span>
-                            <span style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>
-                              {model.description}
-                            </span>
-                          </div>
-                          {selectedModel === model.value && (
-                            <span style={{ color: '#002b5c', fontSize: '14px', fontWeight: '600' }}>✓</span>
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
               <button
                 onClick={sendMessage}
                 disabled={isLoading || !inputValue.trim()}
@@ -2381,6 +2684,100 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
                   }}>
                     Adjust the width of the chat widget (300px - 800px)
                   </span>
+                </div>
+              )}
+
+              {/* Token Usage Statistics - Collapsible */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsTokenStatsExpanded(!isTokenStatsExpanded);
+                  if (!isTokenStatsExpanded) {
+                    refreshTokenStats();
+                  }
+                }}
+                className="sit-w-full sit-flex sit-items-center sit-justify-between sit-px-5 sit-py-3.5 sit-cursor-pointer sit-border-0 sit-transition-colors"
+                style={{
+                  backgroundColor: 'transparent',
+                  borderBottom: '1px solid #f3f4f6',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#f9fafb';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                }}
+              >
+                <span style={{ 
+                  color: '#1f2937',
+                  fontWeight: '600',
+                  fontSize: '14px',
+                }}>
+                  Token Usage
+                </span>
+                <ChevronRight 
+                  size={16} 
+                  strokeWidth={2}
+                  color="#6b7280"
+                  style={{
+                    transform: isTokenStatsExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.2s ease',
+                  }}
+                />
+              </button>
+              
+              {/* Token Usage Content - Collapsible */}
+              {isTokenStatsExpanded && (
+                <div className="sit-px-5 sit-py-4 sit-border-b" style={{ borderBottom: '1px solid #f3f4f6', backgroundColor: '#f9fafb' }}>
+                  {tokenStats ? (
+                    <div className="sit-flex sit-flex-col sit-gap-3">
+                      {/* Current Conversation Stats */}
+                      <div className="sit-flex sit-flex-col sit-gap-1">
+                        <div style={{ fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
+                          Current Conversation
+                        </div>
+                        <div className="sit-flex sit-items-center sit-justify-between sit-text-xs" style={{ color: '#6b7280' }}>
+                          <span>Context Used:</span>
+                          <span style={{ fontWeight: '600', color: tokenStats.contextUsagePercentage > 80 ? '#dc2626' : tokenStats.contextUsagePercentage > 50 ? '#f59e0b' : '#10b981' }}>
+                            {tokenStats.contextUsagePercentage.toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="sit-flex sit-items-center sit-justify-between sit-text-xs" style={{ color: '#6b7280' }}>
+                          <span>Total Tokens:</span>
+                          <span style={{ fontWeight: '600', color: '#1f2937' }}>
+                            {tokenStats.conversationTotal.toLocaleString()}
+                          </span>
+                        </div>
+                        {/* Progress bar */}
+                        <div className="sit-h-2 sit-rounded-full sit-mt-2" style={{ backgroundColor: '#e5e7eb', overflow: 'hidden' }}>
+                          <div 
+                            className="sit-h-full sit-rounded-full sit-transition-all"
+                            style={{ 
+                              backgroundColor: tokenStats.contextUsagePercentage > 80 ? '#dc2626' : tokenStats.contextUsagePercentage > 50 ? '#f59e0b' : '#10b981',
+                              width: `${Math.min(tokenStats.contextUsagePercentage, 100)}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Global Stats */}
+                      <div className="sit-flex sit-flex-col sit-gap-1 sit-pt-2" style={{ borderTop: '1px solid #e5e7eb' }}>
+                        <div style={{ fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
+                          All Time
+                        </div>
+                        <div className="sit-flex sit-items-center sit-justify-between sit-text-xs" style={{ color: '#6b7280' }}>
+                          <span>Total Tokens:</span>
+                          <span style={{ fontWeight: '600', color: '#1f2937' }}>
+                            {tokenStats.globalTotal.toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '12px', color: '#6b7280', textAlign: 'center', padding: '8px 0' }}>
+                      No token usage data yet
+                    </div>
+                  )}
                 </div>
               )}
 

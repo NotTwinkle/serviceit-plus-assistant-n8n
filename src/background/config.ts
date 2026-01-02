@@ -10,8 +10,13 @@ export const N8N_CONFIG = {
   // Can be set via environment variable: VITE_N8N_WEBHOOK_URL
   webhookUrl: import.meta.env.VITE_N8N_WEBHOOK_URL || 'https://your-n8n-instance.com/webhook/ivanti-ai',
   
+  // Security secret for n8n webhook authentication
+  // Must match the secret in your n8n workflow's "Security & Data Prep" node
+  securitySecret: import.meta.env.VITE_N8N_SECRET || 'my-super-secret-password-123',
+  
   // Request timeout (milliseconds)
-  timeout: 30000, // 30 seconds
+  // Increased to 60 seconds to accommodate workflows that use AI models (can take 45+ seconds)
+  timeout: 60000, // 60 seconds
   
   // Retry configuration
   retries: 2,
@@ -20,7 +25,11 @@ export const N8N_CONFIG = {
 
 export const IVANTI_CONFIG = {
   // Base URL for Ivanti instance (used for context extraction only)
-  baseUrl: 'https://success.serviceitplus.com',
+  baseUrl: 'https://swhealthdemo-try.trysaasiteu.com',
+  
+  // API Key for Ivanti API authentication (used by n8n workflows)
+  // This key is passed to n8n so it can authenticate with Ivanti APIs
+  apiKey: '9E7D8E238EE34F92B87F595841DD7079',
 };
 
 // Configuration validation

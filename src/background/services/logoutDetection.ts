@@ -9,6 +9,7 @@
 
 import { clearGlobalUserSession, hasUserSession } from './sessionManager';
 import { IVANTI_CONFIG } from '../config';
+import { buildApiUrl } from '../utils/apiPathHelper';
 
 // Track if logout is already in progress to avoid double cleanup
 let logoutInProgress = false;
@@ -17,29 +18,47 @@ let logoutInProgress = false;
 let periodicCheckInterval: number | null = null;
 let authProbeInterval: number | null = null;
 
+// Debounce timers for logout detection (prevents false positives)
+let logoutDebounceTimer: number | null = null;
+let lastCookieCheckTime = 0;
+const LOGOUT_DEBOUNCE_MS = 3000; // Wait 3 seconds before confirming logout
+const MIN_COOKIE_CHECK_INTERVAL = 2000; // Don't check cookies more than once every 2 seconds
+
 /**
  * Check if user is logged out by verifying UserSettings cookie exists
  * BEST PRACTICE: Use this as a backup validation, not primary detection
  * Primary detection should be cookie.onChanged listener (event-driven)
+ * 
+ * INDUSTRY BEST PRACTICE: Multiple verification checks to prevent false positives
  */
 export async function checkUserLoggedOut(): Promise<boolean> {
   try {
+    // Rate limiting: Don't check too frequently
+    const now = Date.now();
+    if (now - lastCookieCheckTime < MIN_COOKIE_CHECK_INTERVAL) {
+      // Too soon since last check - return cached result (assume still logged in)
+      return false;
+    }
+    lastCookieCheckTime = now;
+
     // Try multiple domain formats (cookies can be stored with different domain formats)
     const domains = [
-      'serviceitplus.com',
-      '.serviceitplus.com',
-      'success.serviceitplus.com',
-      '.success.serviceitplus.com',
+      'swhealthdemo-try.trysaasiteu.com',
+      '.swhealthdemo-try.trysaasiteu.com',
+      'trysaasiteu.com',
+      '.trysaasiteu.com',
     ];
 
+    let userSettingsCookieFound = false;
     for (const domain of domains) {
       try {
         const cookies = await chrome.cookies.getAll({ domain });
         const userSettingsCookie = cookies.find(c => c.name === 'UserSettings');
 
-        if (userSettingsCookie) {
-          // Found the cookie - user is logged in
-          return false;
+        if (userSettingsCookie && userSettingsCookie.value && userSettingsCookie.value.length > 10) {
+          // Found valid cookie - user is logged in
+          userSettingsCookieFound = true;
+          break;
         }
       } catch (domainError) {
         // Some domains might not be accessible, continue to next
@@ -47,19 +66,62 @@ export async function checkUserLoggedOut(): Promise<boolean> {
       }
     }
 
-    // If no cookie found, also verify we don't have an active session
-    // This prevents false positives during initial load
+    if (userSettingsCookieFound) {
+      // Cookie exists - user is definitely logged in
+      return false;
+    }
+
+    // If no cookie found, verify with multiple checks before declaring logout
+    // This prevents false positives during:
+    // - Cookie updates/refreshes
+    // - Page navigation
+    // - Temporary cookie unavailability
+    
+    // Check 1: Do we have an active session in memory?
     if (hasUserSession()) {
-      // We have an active session in memory - verify it's still valid
+      // We have an active session - verify it's still valid with API check
       const result = await chrome.storage.local.get(['currentUser']);
       if (result.currentUser) {
-        // Session exists in storage - assume still logged in
-        // Cookie might be temporarily unavailable but session is valid
-        return false;
+        // Session exists in storage - verify with lightweight API call
+        try {
+          const apiUrl = await buildApiUrl(
+            IVANTI_CONFIG.baseUrl,
+            'odata/businessobject/employees?$top=1&$select=RecId'
+          );
+          
+          const res = await fetch(apiUrl, {
+            method: 'GET',
+            credentials: 'include',
+            headers: { 'Accept': 'application/json' },
+          });
+
+          // If API call succeeds (200/204), user is still logged in
+          // Only treat as logout if we get definitive auth errors (401/403)
+          if (res.status === 200 || res.status === 204) {
+            console.log('[LogoutDetection] ✅ API verification: User is still logged in (cookie temporarily unavailable)');
+            return false;
+          }
+          
+          // If we get 401/403, user is definitely logged out
+          if (res.status === 401 || res.status === 403) {
+            console.log('[LogoutDetection] 🔒 API verification: User is logged out (401/403)');
+            return true;
+          }
+          
+          // For other status codes (404, 500, etc.), assume still logged in
+          // These don't necessarily mean logout
+          console.log('[LogoutDetection] ⚠️ API verification: Ambiguous status', res.status, '- assuming still logged in');
+          return false;
+        } catch (error) {
+          // Network error - don't assume logout, might be temporary
+          console.log('[LogoutDetection] ⚠️ API verification failed (network error) - assuming still logged in');
+          return false;
+        }
       }
     }
 
-    // No cookie AND no active session = logged out
+    // No cookie AND no active session = likely logged out
+    // But we'll let the debounced handler verify this
     return true;
   } catch (error) {
     console.error('[LogoutDetection] Error checking logout status:', error);
@@ -193,18 +255,29 @@ export function startAuthProbe(): void {
     if (!hasUserSession()) return;
 
     try {
-      const res = await fetch(
-        `${IVANTI_CONFIG.baseUrl}/HEAT/api/odata/businessobject/employees?$top=1&$select=RecId`,
-        {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Accept': 'application/json' },
-        }
+      const apiUrl = await buildApiUrl(
+        IVANTI_CONFIG.baseUrl,
+        'odata/businessobject/employees?$top=1&$select=RecId'
       );
+      
+      const res = await fetch(apiUrl, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Accept': 'application/json' },
+      });
 
       if (res.status === 401 || res.status === 403) {
-        console.warn('[LogoutDetection] 🔒 Auth probe received', res.status, '- treating as logout');
-        await handleLogout();
+        console.warn('[LogoutDetection] 🔒 Auth probe received', res.status, '- verifying logout...');
+        
+        // Verify with cookie check before triggering logout
+        // Auth errors can happen for other reasons (API key issues, endpoint changes, etc.)
+        const isLoggedOut = await checkUserLoggedOut();
+        if (isLoggedOut) {
+          console.warn('[LogoutDetection] 🔒 Auth probe confirmed logout');
+          await handleLogout();
+        } else {
+          console.log('[LogoutDetection] ⚠️ Auth probe got', res.status, 'but UserSettings cookie still exists - likely API issue, not logout');
+        }
       }
     } catch (err) {
       // Ignore network errors; they can be transient
@@ -233,50 +306,100 @@ export function initializeLogoutDetection(): void {
   console.log('[LogoutDetection] 🔍 Initializing logout detection...');
 
   // Monitor UserSettings cookie to detect logout AND re-login
+  // INDUSTRY BEST PRACTICE: Debounce logout detection to prevent false positives
   chrome.cookies.onChanged.addListener((changeInfo) => {
     // Only monitor Ivanti domain
-    if (!changeInfo.cookie.domain.includes('serviceitplus.com')) {
+    if (!changeInfo.cookie.domain.includes('trysaasiteu.com') && !changeInfo.cookie.domain.includes('swhealthdemo-try')) {
       return;
     }
 
     // Check if UserSettings cookie was removed (LOGOUT)
+    // BEST PRACTICE: Debounce and verify before triggering logout
     if (changeInfo.cookie.name === 'UserSettings' && changeInfo.removed) {
-      console.log('[LogoutDetection] 🚪 LOGOUT DETECTED: UserSettings cookie removed');
-      handleLogout();
+      console.log('[LogoutDetection] 🚪 UserSettings cookie removal detected - debouncing logout check...');
+      
+      // Clear any existing debounce timer
+      if (logoutDebounceTimer) {
+        clearTimeout(logoutDebounceTimer);
+      }
+      
+      // Debounce: Wait before confirming logout (prevents false positives from temporary cookie changes)
+      logoutDebounceTimer = window.setTimeout(async () => {
+        // Verify logout with multiple checks before triggering
+        console.log('[LogoutDetection] 🔍 Verifying logout after debounce period...');
+        
+        const isLoggedOut = await checkUserLoggedOut();
+        if (isLoggedOut) {
+          console.log('[LogoutDetection] 🚪 LOGOUT CONFIRMED: UserSettings cookie removed and verified');
+          await handleLogout();
+        } else {
+          console.log('[LogoutDetection] ✅ False alarm: UserSettings cookie was temporarily unavailable, but user is still logged in');
+        }
+        
+        logoutDebounceTimer = null;
+      }, LOGOUT_DEBOUNCE_MS);
     }
 
     // Check if UserSettings cookie was added (RE-LOGIN after logout)
     if (changeInfo.cookie.name === 'UserSettings' && !changeInfo.removed) {
+      // BEST PRACTICE: Only send login event if we don't have an active session
+      // This prevents unnecessary re-initialization when user is already logged in
       if (!hasUserSession()) {
         console.log('[LogoutDetection] 🔓 LOGIN DETECTED: UserSettings cookie added');
-        // Notify all Ivanti tabs that user logged in
-        chrome.tabs.query({ url: `${IVANTI_CONFIG.baseUrl}/*` }, (tabs) => {
-          console.log(`[LogoutDetection] 📤 Sending USER_LOGGED_IN to ${tabs.length} tabs`);
-          tabs.forEach(tab => {
-            if (tab.id) {
-              chrome.tabs.sendMessage(tab.id, {
-                type: 'USER_LOGGED_IN',
-              }).catch((error) => {
-                console.log(`[LogoutDetection] Note: Could not send login to tab ${tab.id}:`, error.message);
+        
+        // BEST PRACTICE: Quick validation before notifying tabs
+        // Verify the cookie actually contains valid data (not just empty cookie)
+        try {
+          const cookieValue = changeInfo.cookie.value;
+          if (cookieValue && cookieValue.length > 10) {
+            // Cookie has meaningful data - this is a real login
+            // Notify all Ivanti tabs that user logged in
+            chrome.tabs.query({ url: `${IVANTI_CONFIG.baseUrl}/*` }, (tabs) => {
+              console.log(`[LogoutDetection] 📤 Sending USER_LOGGED_IN to ${tabs.length} tabs`);
+              tabs.forEach(tab => {
+                if (tab.id) {
+                  chrome.tabs.sendMessage(tab.id, {
+                    type: 'USER_LOGGED_IN',
+                  }).catch((error) => {
+                    console.log(`[LogoutDetection] Note: Could not send login to tab ${tab.id}:`, error.message);
+                  });
+                }
               });
-            }
-          });
-        });
+            });
+          } else {
+            console.log('[LogoutDetection] ⚠️ UserSettings cookie added but appears empty - skipping login event');
+          }
+        } catch (error) {
+          console.error('[LogoutDetection] Error validating login cookie:', error);
+        }
+      } else {
+        console.log('[LogoutDetection] ℹ️ UserSettings cookie added but session already exists - skipping login event');
       }
     }
 
     // Also check for session ID or other auth cookies being removed
+    // BEST PRACTICE: Only trigger logout if UserSettings is ALSO missing
+    // Session cookies can be refreshed/changed without actual logout
     if (
       (changeInfo.cookie.name.includes('Session') ||
         changeInfo.cookie.name.includes('Auth') ||
         changeInfo.cookie.name.includes('SID')) &&
-      changeInfo.removed
+      changeInfo.removed &&
+      hasUserSession()
     ) {
-      console.log('[LogoutDetection] 🚪 Session cookie removed:', changeInfo.cookie.name);
-      if (hasUserSession()) {
-        console.log('[LogoutDetection] 🚪 Triggering logout cleanup due to session cookie removal');
-        handleLogout();
-      }
+      console.log('[LogoutDetection] ⚠️ Session cookie removed:', changeInfo.cookie.name);
+      
+      // Don't immediately logout - verify UserSettings is also missing
+      // Session cookies can be refreshed during normal operations
+      window.setTimeout(async () => {
+        const isLoggedOut = await checkUserLoggedOut();
+        if (isLoggedOut) {
+          console.log('[LogoutDetection] 🚪 Session cookie removed AND UserSettings missing - confirmed logout');
+          await handleLogout();
+        } else {
+          console.log('[LogoutDetection] ℹ️ Session cookie removed but UserSettings still exists - likely cookie refresh, not logout');
+        }
+      }, LOGOUT_DEBOUNCE_MS);
     }
   });
 

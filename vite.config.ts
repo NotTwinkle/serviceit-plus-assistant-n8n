@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
-import { copyFileSync, existsSync, mkdirSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'fs';
 
 export default defineConfig({
   plugins: [
@@ -10,10 +10,34 @@ export default defineConfig({
       name: 'copy-manifest',
       closeBundle() {
         // Copy manifest.json to dist
+        const manifestPath = resolve(__dirname, 'dist/manifest.json');
         copyFileSync(
           resolve(__dirname, 'manifest.json'),
-          resolve(__dirname, 'dist/manifest.json')
+          manifestPath
         );
+        
+        // Update manifest.json to include any chunk files (they'll be loaded as modules)
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+        const distDir = resolve(__dirname, 'dist');
+        const files = readdirSync(distDir);
+        
+        // Find chunk files (files ending in .js that aren't main entry points)
+        const jsChunks = files.filter((f: string) => 
+          f.endsWith('.js') && 
+          f !== 'content.js' && 
+          f !== 'background.js' &&
+          f !== 'inject.js' &&
+          f !== 'brute-force-scanner.js' &&
+          !f.includes('vendor') // Exclude vendor chunk (it's shared)
+        );
+        
+        // Add chunk files to content scripts BEFORE content.js (dependencies first)
+        if (jsChunks.length > 0 && manifest.content_scripts && manifest.content_scripts[0]) {
+          manifest.content_scripts[0].js = [...jsChunks, 'content.js'];
+          console.log(`[Vite] Added ${jsChunks.length} chunk files to manifest (before content.js):`, jsChunks);
+        }
+        
+        writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
         // Copy inject.js to dist
         if (existsSync(resolve(__dirname, 'src/content/inject.js'))) {
@@ -61,16 +85,32 @@ export default defineConfig({
       },
       output: {
         entryFileNames: '[name].js',
+        chunkFileNames: '[name]-[hash].js',
         assetFileNames: (assetInfo) => {
-          // Name CSS file as content.css to match manifest.json
           if (assetInfo.name === 'style.css') {
             return 'content.css';
           }
           return '[name].[ext]';
         },
+        // Force all shared code into each entry file (no shared chunks)
+        manualChunks: (id) => {
+          // If it's a shared module, include it in both entry points
+          // This prevents chunk creation by duplicating shared code
+          if (id.includes('configStorage')) {
+            // Return undefined to include in all entry points
+            return undefined;
+          }
+          // Don't create chunks - bundle everything into entry files
+          return undefined;
+        },
+        format: 'es', // Use ES modules (works for both content and background in Manifest V3)
       },
     },
     cssCodeSplit: false,
+    // Disable code splitting completely
+    commonjsOptions: {
+      include: [/node_modules/],
+    },
   },
   define: {
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'production'),

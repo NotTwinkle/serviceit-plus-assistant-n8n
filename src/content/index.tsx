@@ -2,7 +2,11 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import ChatWidget from '../components/ChatWidget';
 import LoadingScreen from '../components/LoadingScreen';
-import { scrapeUserNameFromDOM } from './utils/domScraping';
+import ErrorDialog from '../components/ErrorDialog';
+import SetupWizard from '../components/SetupWizard';
+import { scrapeUserNameFromDOM, detectLoginInterface } from './utils/domScraping';
+import { getEndpointsWithPrefix } from './utils/apiPathDiscovery';
+import { hasConfig, getStoredConfig, saveConfig } from './configStorage';
 import '../styles.css';
 
 export interface UserInfo {
@@ -50,7 +54,15 @@ const getUserInfo = async (): Promise<UserInfo | null> => {
       console.log("✅ ServiceIT: User identified:", response.user);
       return response.user;
     } else {
-      console.warn("ServiceIT: Background script could not identify user:", response.error);
+      const errorMessage = response?.error || 'Unknown error';
+      console.warn("ServiceIT: Background script could not identify user:", errorMessage);
+      
+      // Store error for potential error dialog display
+      (window as any).__serviceit_last_error = {
+        type: 'user_identification',
+        message: errorMessage,
+        fallbackDisplayName,
+      };
       
       // Last resort: use DOM-scraped name
       if (fallbackDisplayName) {
@@ -217,29 +229,55 @@ chrome.runtime.onMessage.addListener((message) => {
   
   // Listen for RE-LOGIN events from background script
   // This is sent when UserSettings cookie is detected after it was previously removed
-  if (message.type === 'USER_LOGGED_IN' && hasLoggedOut) {
+  if (message.type === 'USER_LOGGED_IN') {
     console.log('🚪 ========================================');
-    console.log('🚪 ServiceIT: USER_LOGGED_IN received - reinitializing...');
+    console.log('🚪 ServiceIT: USER_LOGGED_IN received - checking if re-initialization needed...');
     console.log('🚪 ========================================');
     
     // Reset the logout flag
     hasLoggedOut = false;
     
-    // Generate new session ID for complete isolation
-    // ENTERPRISE BEST PRACTICE: Each login session gets unique ID
-    currentSessionId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    console.log(`✅ ServiceIT: New session created: ${currentSessionId}`);
-    
-    // Store session ID to verify against cached data
-    chrome.storage.local.set({ lastSessionId: currentSessionId }, () => {
-      console.log('✅ ServiceIT: Session ID stored');
-    });
-    
-    // Re-run init() to show loading screen and rebuild UI
-    setTimeout(() => {
-      console.log('🔄 ServiceIT: Initializing fresh session...');
-      init();
-    }, 1500); // Slightly longer delay to ensure complete cleanup
+    // BEST PRACTICE: Quick check if user is already identified before showing loading
+    // This prevents loading screen on re-login if session is already valid
+    (async () => {
+      try {
+        const cachedData = await chrome.storage.local.get(['currentUser', 'lastSessionId']);
+        
+        // Quick auth check to see if we can use cached user
+        const apiPrefix = JSON.parse(sessionStorage.getItem('serviceit_api_path_prefix') || '{"prefix":"/api"}').prefix || '/api';
+        const quickCheck = await fetch(`${window.location.origin}${apiPrefix}/odata/businessobject/employees?$top=1&$select=RecId`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Accept': 'application/json' },
+        }).catch(() => null);
+        
+        if (quickCheck && (quickCheck.status === 200 || quickCheck.status === 204)) {
+          if (cachedData.currentUser) {
+            console.log('✅ ServiceIT: Session already valid - using cached user (no loading screen)');
+            // User is already logged in and we have cached data - no need to re-init
+            return; // Exit early - don't show loading screen
+          }
+        }
+      } catch (error) {
+        console.log('⚠️ ServiceIT: Quick check failed, will re-initialize:', error);
+      }
+      
+      // Generate new session ID for complete isolation
+      // ENTERPRISE BEST PRACTICE: Each login session gets unique ID
+      currentSessionId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      console.log(`✅ ServiceIT: New session created: ${currentSessionId}`);
+      
+      // Store session ID to verify against cached data
+      chrome.storage.local.set({ lastSessionId: currentSessionId }, () => {
+        console.log('✅ ServiceIT: Session ID stored');
+      });
+      
+      // Re-run init() - but it will check for cached user first
+      setTimeout(() => {
+        console.log('🔄 ServiceIT: Initializing session...');
+        init();
+      }, 500); // Shorter delay since we're checking cache first
+    })();
   }
 });
 
@@ -277,8 +315,84 @@ const init = async () => {
     }
   }
 
+  // Check if configuration exists
+  const configExists = await hasConfig();
+  
+  // If no configuration, show setup wizard
+  if (!configExists) {
+    console.log('[ServiceIT] No configuration found. Showing setup wizard...');
+    
+    // Create root container for setup wizard
+    const rootContainer = document.createElement('div');
+    rootContainer.id = 'serviceit-assistant-root';
+    rootContainer.style.cssText = 'all: initial; position: fixed; z-index: 2147483647;';
+    document.body.appendChild(rootContainer);
+    
+    const root = ReactDOM.createRoot(rootContainer);
+    globalReactRoot = root;
+    
+    root.render(
+      <React.StrictMode>
+        <SetupWizard
+          open={true}
+          onClose={() => {
+            // User closed the wizard - use auto-discovery
+            root.unmount();
+            rootContainer.remove();
+            setTimeout(() => {
+              init();
+            }, 500);
+          }}
+          onComplete={async (config) => {
+            // Save configuration
+            await saveConfig(config);
+            
+            // Update IVANTI_CONFIG in background script
+            await chrome.runtime.sendMessage({
+              type: 'UPDATE_CONFIG',
+              config,
+            });
+            
+            // Unmount wizard and continue with normal initialization
+            root.unmount();
+            rootContainer.remove();
+            
+            // Re-initialize with new config
+            setTimeout(() => {
+              init();
+            }, 500);
+          }}
+          onSkip={() => {
+            // User skipped setup - use auto-discovery
+            root.unmount();
+            rootContainer.remove();
+            // Continue with normal initialization
+            setTimeout(() => {
+              init();
+            }, 500);
+          }}
+        />
+      </React.StrictMode>
+    );
+    
+    return; // Exit early, setup wizard will handle continuation
+  }
+  
+  // Get stored configuration and use it
+  const storedConfig = await getStoredConfig();
+  if (storedConfig) {
+    console.log('[ServiceIT] Using stored configuration:', storedConfig);
+    // Update sessionStorage with stored API path prefix
+    sessionStorage.setItem('serviceit_api_path_prefix', JSON.stringify({
+      prefix: storedConfig.apiPathPrefix,
+      timestamp: storedConfig.configuredAt,
+    }));
+  }
+
   // Check if we're on an Ivanti domain first
   const isIvantiDomain = window.location.hostname.includes('serviceitplus.com') || 
+                         window.location.hostname.includes('trysaasiteu.com') ||
+                         window.location.hostname.includes('swhealthdemo-try') ||
                          window.location.hostname.includes('ivanti.com') ||
                          window.location.hostname.includes('heat');
   
@@ -287,54 +401,90 @@ const init = async () => {
     return;
   }
 
+  // CRITICAL: Check for login interface BEFORE doing anything else
+  // If user is on login page, don't show loading screen or try to initialize
+  const isLoginPage = detectLoginInterface();
+  if (isLoginPage) {
+    console.log("🚪 ServiceIT: Login page detected. AI Assistant will not load until user logs in.");
+    return; // Exit early - don't show loading screen or try to initialize
+  }
+
   // Validate session by making a lightweight API call to Ivanti
   // This is more reliable than just checking cookies (which can persist after logout)
   // Try multiple endpoints in case one fails
   // IMPORTANT: Only block on 401/403 (definitive "not logged in"). All other errors are treated as potentially valid.
   console.log('[ServiceIT] Validating Ivanti session with API call...');
   
-  const validationEndpoints = [
-    '/HEAT/api/v1/User/current',
-    '/HEAT/api/v1/user/current',
-    '/HEAT/api/rest/Session/User',
-    '/HEAT/api/odata/businessobject/employees?$top=1',
-    '/HEAT/api/odata/businessobject/categorys?$top=1',
+  // Build validation endpoints with discovered prefix (or fallback to default)
+  const baseUrl = window.location.origin;
+  const endpointPaths = [
+    'v1/User/current',
+    'v1/user/current',
+    'rest/Session/User',
+    'odata/businessobject/employees?$top=1',
+    'odata/businessobject/categorys?$top=1',
   ];
   
-  let foundAuthError = false;
+  const validationEndpoints = await getEndpointsWithPrefix(baseUrl, endpointPaths);
   
-  for (const endpoint of validationEndpoints) {
+  let foundAuthError = false;
+  let allEndpoints404 = true;
+  let endpointResults: Array<{ endpoint: string; status: number; error?: string }> = [];
+  
+  // Get API key from stored config (already retrieved above)
+  const apiKey = storedConfig?.apiKey;
+  
+  // Build headers with API key if available
+  const headers: Record<string, string> = {
+    'Accept': 'application/json',
+  };
+  
+  if (apiKey) {
+    headers['Authorization'] = `rest_api_key=${apiKey}`;
+  }
+
+  for (const testUrl of validationEndpoints) {
     try {
-      const testUrl = window.location.origin + endpoint;
       const testResponse = await fetch(testUrl, {
         method: 'GET',
         credentials: 'include',
-        headers: {
-          'Accept': 'application/json',
-        },
+        headers,
       });
       
-      console.log(`[ServiceIT] Session validation (${endpoint}):`, testResponse.status);
+      const status = testResponse.status;
+      const endpoint = testUrl.replace(baseUrl, '');
+      console.log(`[ServiceIT] Session validation (${endpoint}):`, status);
+      endpointResults.push({ endpoint, status });
       
       // ONLY block on 401 or 403 - these definitively mean user is not logged in
-      if (testResponse.status === 401 || testResponse.status === 403) {
+      if (status === 401 || status === 403) {
         console.log("ServiceIT: User is not logged in (401/403). AI Assistant will not load.");
         foundAuthError = true;
+        allEndpoints404 = false;
         break;
       }
       
       // If we get 200 or 204, session is definitely valid - proceed
-      if (testResponse.status === 200 || testResponse.status === 204) {
+      if (status === 200 || status === 204) {
         console.log(`ServiceIT: ✅ Active session validated via ${endpoint}. Proceeding with AI Assistant initialization.`);
+        allEndpoints404 = false;
         break; // Found valid endpoint, proceed
+      }
+      
+      // Track if all endpoints are 404 (configuration issue)
+      if (status !== 404) {
+        allEndpoints404 = false;
       }
       
       // For 400, 404, 500, or any other error - these don't necessarily mean logged out
       // Continue trying other endpoints, but don't block initialization
-      console.log(`[ServiceIT] Endpoint ${endpoint} returned ${testResponse.status} (non-auth error), trying next endpoint...`);
+      console.log(`[ServiceIT] Endpoint ${endpoint} returned ${status} (non-auth error), trying next endpoint...`);
     } catch (error: any) {
       // Network errors, CORS errors, etc. - don't block, just try next endpoint
+      const endpoint = testUrl.replace(baseUrl, '');
       console.log(`[ServiceIT] Error validating with ${endpoint}:`, error.message);
+      endpointResults.push({ endpoint, status: 0, error: error.message });
+      allEndpoints404 = false; // Network errors mean endpoints exist but are unreachable
       continue; // Try next endpoint
     }
   }
@@ -345,10 +495,52 @@ const init = async () => {
     return; // Exit early - don't show any UI
   }
   
+  // Create the UI container FIRST (needed for error dialogs too)
+  const rootContainer = document.createElement('div');
+  rootContainer.id = 'serviceit-assistant-root';
+  rootContainer.style.cssText = 'all: initial; position: fixed; z-index: 2147483647;';
+  document.body.appendChild(rootContainer);
+
+  // Check if all endpoints returned 404 - this indicates wrong URL/API configuration
+  if (allEndpoints404 && endpointResults.length === validationEndpoints.length) {
+    console.error("ServiceIT: ⚠️ All API endpoints returned 404. This may indicate incorrect URL or API configuration.");
+    
+    // Show error dialog
+    const errorRoot = ReactDOM.createRoot(rootContainer);
+    const errors: Array<import('../components/ErrorDialog').ErrorInfo> = [
+      {
+        type: 'url',
+        message: 'Unable to connect to Ivanti API endpoints. All endpoints returned 404 (Not Found).',
+        details: `Current URL: ${window.location.origin}\n\nFailed Endpoints:\n${endpointResults.map(r => `  • ${r.endpoint} → ${r.status === 0 ? 'Network Error' : `HTTP ${r.status}`}`).join('\n')}`,
+      },
+    ];
+    
+    errorRoot.render(
+      <React.StrictMode>
+        <ErrorDialog
+          open={true}
+          errors={errors}
+          onClose={() => {
+            errorRoot.unmount();
+            rootContainer.remove();
+          }}
+          onRetry={() => {
+            errorRoot.unmount();
+            // Retry initialization
+            setTimeout(() => {
+              init();
+            }, 500);
+          }}
+        />
+      </React.StrictMode>
+    );
+    return; // Exit early - error dialog is shown
+  }
+
   // If we get here, either:
   // 1. We found a valid endpoint (200/204)
-  // 2. All endpoints returned non-auth errors (400, 404, 500, etc.) - assume session might still be valid
-  // 3. All endpoints failed with network errors - assume session might still be valid
+  // 2. Some endpoints returned non-auth errors (400, 404, 500, etc.) - assume session might still be valid
+  // 3. Some endpoints failed with network errors - assume session might still be valid
   console.log("ServiceIT: ✅ No authentication errors detected. Proceeding with AI Assistant initialization.");
 
   // Diagnostic logging
@@ -361,69 +553,93 @@ const init = async () => {
   // RUN BRUTE FORCE SCAN to find ALL user data locations
   runBruteForceScan();
 
-  // Create the UI container FIRST
-  const rootContainer = document.createElement('div');
-  rootContainer.id = 'serviceit-assistant-root';
-  rootContainer.style.cssText = 'all: initial; position: fixed; z-index: 2147483647;';
-  document.body.appendChild(rootContainer);
-
   // ENTERPRISE BEST PRACTICE: Store root globally for proper cleanup
   const root = ReactDOM.createRoot(rootContainer);
   globalReactRoot = root;
   
-  // 2025 BEST PRACTICE: Check for cached user first to avoid loading screen
-  console.log("ServiceIT: Checking for cached user session...");
+  // BEST PRACTICE: Quick authentication check BEFORE showing loading screen
+  // Check if we have a valid cached session first
+  console.log("ServiceIT: Performing quick authentication check...");
+  
+  let shouldShowLoading = true;
   let currentUser: UserInfo | null = null;
   
   try {
-    // Try to get cached user from background script first (instant)
-    const cachedUserResponse = await chrome.runtime.sendMessage({
-      type: 'GET_CACHED_USER'
-    });
-    
-    if (cachedUserResponse && cachedUserResponse.success && cachedUserResponse.user) {
-      console.log("✅ ServiceIT: Using cached user - showing UI immediately:", cachedUserResponse.user.fullName);
-      currentUser = cachedUserResponse.user;
+    // Strategy 1: Check chrome.storage for cached user (instant, no API call)
+    const cachedData = await chrome.storage.local.get(['currentUser', 'lastSessionId']);
+    if (cachedData.currentUser && cachedData.lastSessionId) {
+      console.log("✅ ServiceIT: Found cached user session:", cachedData.currentUser.fullName);
       
-      // Show UI immediately with cached user (skip loading screen!)
-      root.render(
-        <React.StrictMode>
-          <ChatWidget currentUser={currentUser} />
-        </React.StrictMode>
-      );
+      // Strategy 2: Verify session is still valid with lightweight API check
+      // Use OData endpoint (most reliable) with timeout
+      const apiPrefix = storedConfig?.apiPathPrefix || '/api';
+      const quickAuthCheck = Promise.race([
+        fetch(`${baseUrl}${apiPrefix}/odata/businessobject/employees?$top=1&$select=RecId`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: apiKey ? { 'Accept': 'application/json', 'Authorization': `rest_api_key=${apiKey}` } : { 'Accept': 'application/json' },
+        }),
+        new Promise<Response>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000)) // 2 second timeout
+      ]);
       
-      // Refresh user data in background (silent)
-      getUserInfo().then((freshUser) => {
-        if (freshUser && freshUser.loginId === currentUser?.loginId) {
-          console.log("✅ ServiceIT: User data refreshed in background");
-          // Optionally update UI if user data changed
-          if (JSON.stringify(freshUser) !== JSON.stringify(currentUser)) {
-            console.log("ServiceIT: User data changed, updating UI...");
-            currentUser = freshUser;
-            root.render(
-              <React.StrictMode>
-                <ChatWidget currentUser={currentUser} />
-              </React.StrictMode>
-            );
-          }
+      try {
+        const authResponse = await quickAuthCheck;
+        if (authResponse.status === 200 || authResponse.status === 204) {
+          // Session is valid - use cached user immediately
+          console.log("✅ ServiceIT: Session validated - using cached user (no loading screen)");
+          currentUser = cachedData.currentUser;
+          shouldShowLoading = false;
+        } else if (authResponse.status === 401 || authResponse.status === 403) {
+          // Session expired - clear cache and show loading
+          console.log("⚠️ ServiceIT: Session expired - clearing cache");
+          await chrome.storage.local.remove(['currentUser', 'lastSessionId']);
+          shouldShowLoading = true;
         }
-      }).catch((error) => {
-        console.warn("ServiceIT: Background user refresh failed (non-critical):", error);
-      });
-      
-      // Start background data prefetch (silent)
-      chrome.runtime.sendMessage({
-        type: 'PREFETCH_DATA',
-        currentUser: currentUser,
-        silent: true // Don't show progress
-      }).catch(() => {
-        // Ignore errors - prefetch is optional
-      });
-      
-      return; // Exit early - UI is already shown!
+      } catch (error) {
+        // Network error or timeout - assume session might be valid, use cache
+        console.log("⚠️ ServiceIT: Auth check timeout/error - using cached user (optimistic)");
+        currentUser = cachedData.currentUser;
+        shouldShowLoading = false;
+      }
     }
   } catch (error) {
-    console.log("ServiceIT: No cached user found, will show loading screen:", error);
+    console.error("ServiceIT: Error checking cached session:", error);
+  }
+  
+  // If we have a valid cached user, show UI immediately (skip loading screen)
+  if (!shouldShowLoading && currentUser) {
+    console.log("✅ ServiceIT: Showing UI immediately with cached user (no loading screen)");
+    root.render(
+      <React.StrictMode>
+        <ChatWidget currentUser={currentUser} />
+      </React.StrictMode>
+    );
+    
+    // Refresh user data in background (silent, non-blocking)
+    getUserInfo().then((freshUser) => {
+      if (freshUser && freshUser.loginId === currentUser?.loginId) {
+        // Same user - update silently if needed
+        console.log("✅ ServiceIT: User data refreshed silently");
+        root.render(
+          <React.StrictMode>
+            <ChatWidget currentUser={freshUser} />
+          </React.StrictMode>
+        );
+      } else if (freshUser) {
+        // Different user - update UI
+        console.log("🔄 ServiceIT: Different user detected, updating UI");
+        root.render(
+          <React.StrictMode>
+            <ChatWidget currentUser={freshUser} />
+          </React.StrictMode>
+        );
+      }
+    }).catch((error) => {
+      console.error("ServiceIT: Error refreshing user:", error);
+      // Keep showing cached user on error
+    });
+    
+    return; // Exit early - UI is already shown, no loading screen
   }
 
   // No cached user found - show loading screen and fetch fresh data
@@ -451,13 +667,51 @@ const init = async () => {
   updateProgress({ stage: 'user_identification', progress: 10, message: 'Identifying user...' });
   currentUser = await getUserInfo();
   
+  if (!currentUser) {
+    // User identification completely failed - show error dialog
+    console.error("ServiceIT: ❌ User identification failed completely. Showing error dialog.");
+    
+    const lastError = (window as any).__serviceit_last_error;
+    const errors: Array<import('../components/ErrorDialog').ErrorInfo> = [
+      {
+        type: 'api',
+        message: 'Unable to identify the current user. This may be due to incorrect API configuration, network issues, or the user not being logged in.',
+        details: lastError 
+          ? `Error from background script: ${lastError.message}\n\nCurrent URL: ${window.location.origin}`
+          : `Current URL: ${window.location.origin}`,
+      },
+    ];
+    
+    root.render(
+      <React.StrictMode>
+        <ErrorDialog
+          open={true}
+          errors={errors}
+          onClose={() => {
+            rootContainer.remove();
+          }}
+          onRetry={() => {
+            // Retry initialization
+            rootContainer.remove();
+            delete (window as any).__serviceit_last_error;
+            setTimeout(() => {
+              init();
+            }, 500);
+          }}
+        />
+      </React.StrictMode>
+    );
+    return; // Exit early - error dialog is shown
+  }
+  
   if (currentUser) {
     console.log("Service IT Plus: Identified User", currentUser);
     
     // SECURITY CHECK: Ensure user has role before proceeding
     // If no role is detected, this is a critical security issue - block access
-    if (!currentUser.role && (!currentUser.roles || currentUser.roles.length === 0)) {
-      console.error('🚨 ServiceIT: SECURITY - No role detected for user!');
+    // BUT: Allow if we have at least loginId (cookie-based identification, API unavailable)
+    if (!currentUser.role && (!currentUser.roles || currentUser.roles.length === 0) && !currentUser.loginId) {
+      console.error('🚨 ServiceIT: SECURITY - No role or loginId detected for user!');
       console.error('🚨 ServiceIT: User data:', currentUser);
       console.error('🚨 ServiceIT: AI Assistant will be blocked for security.');
       

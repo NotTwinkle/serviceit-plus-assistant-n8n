@@ -109,6 +109,8 @@ export function getTicketRecId(): string | null {
 export function isIvantiDomain(): boolean {
   const hostname = window.location.hostname.toLowerCase();
   return hostname.includes('serviceitplus.com') ||
+         hostname.includes('trysaasiteu.com') ||
+         hostname.includes('swhealthdemo-try') ||
          hostname.includes('ivanti.com') ||
          hostname.includes('heat');
 }

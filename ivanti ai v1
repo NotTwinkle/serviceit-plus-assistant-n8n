@@ -1,0 +1,1030 @@
+{
+    "nodes": [
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "={{ $json.query }}",
+          "messages": {
+            "messageValues": [
+              {
+                "message": "You are an Enterprise Service Desk Router. Analyze the user's query and output valid JSON.\n\nROUTING RULES:\n1. \"lookup\": User wants status of a specific ticket (e.g. \"Status of INC-100\", \"Where is my request?\"). Extract the ID.\n2. \"my_tickets\": User wants to see their list of open items (e.g. \"Show my tickets\", \"What do I have open?\").\n3. \"agent\": Complex requests, creating tickets, searching documentation, or fixing errors.\n\nOUTPUT FORMAT (JSON ONLY):\n{\n  \"intent\": \"lookup\" | \"my_tickets\" | \"agent\",\n  \"entity\": \"INC-XXXXX\" (or null)\n}"
+              }
+            ]
+          },
+          "batching": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.chainLlm",
+        "typeVersion": 1.7,
+        "position": [
+          -368,
+          -112
+        ],
+        "id": "7dad502e-ec24-491d-9caf-0b3ca1991e48",
+        "name": "Basic LLM Chain"
+      },
+      {
+        "parameters": {
+          "model": "llama3:latest",
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.lmOllama",
+        "typeVersion": 1,
+        "position": [
+          -368,
+          96
+        ],
+        "id": "90f1cd18-0b2a-466b-b704-eb8a69842171",
+        "name": "Ollama Model",
+        "credentials": {
+          "ollamaApi": {
+            "id": "bQEKIlwhUYs7kwSw",
+            "name": "Ollama account 4"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// UNIVERSAL FIX FOR n8n v1.121.3\n// Use $input.all() so this works regardless of how n8n groups data.\nconst items = $input.all();\n\n// Safety check: Did we get data?\nif (items.length === 0) {\n  return [{ json: { error: \"No data received\" } }];\n}\n\nconst firstItem = items[0].json;\n\n// 1. SECURITY CHECK\nconst clientSecret = firstItem.headers ? firstItem.headers['x-extension-secret'] : '';\n// NOTE: In this environment, Code nodes cannot read $env, so we keep a static secret here.\n// Make sure this matches the value your extension sends in the x-extension-secret header.\nconst mySecret = 'my-super-secret-password-123'; // <--- CHANGE THIS TO YOUR REAL SHARED SECRET\n\nif (clientSecret !== mySecret) {\n  // Use return instead of throw to avoid crashing the workflow\n  return [{ json: { error: \"Unauthorized\", authorized: false } }];\n}\n\n// 2. DATA NORMALIZATION\nconst payload = firstItem.body || firstItem;\nconst userEmail = payload.userLoginId || \"unknown_user\";\n\n// 3. Template context (from the extension)\nconst templateContext = payload.templateContext || null;\nconst requiresFollowUp = templateContext?.requiresFollowUp || false;\nconst templateAction = templateContext?.templateAction || null;\n\n// Optional: forced intent for bypassing or overriding the router decision\nconst forcedIntent = payload.forcedIntent || null;\n\n// Return a clean object with sessionId explicitly defined\nreturn [{\n  json: {\n    sessionId: userEmail, // Memory node needs this specific key\n    query: payload.message || \"\",\n    userEmail: userEmail,\n    userContext: {\n      ticketId: payload.ticketId || null,\n      url: payload.url || \"\"\n    },\n    templateContext,\n    requiresFollowUp,\n    templateAction,\n    forcedIntent\n  }\n}];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -1088,
+          -112
+        ],
+        "id": "b597b665-7684-4ad0-8aee-522c7a28b419",
+        "name": "Security & Data Prep"
+      },
+      {
+        "parameters": {
+          "url": "https://success.serviceitplus.com/HEAT/api/odata/businessobject/categorys",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "$top",
+                "value": "50"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          -816,
+          -320
+        ],
+        "id": "fc792f6a-c823-4e20-9d19-a5991175a5c8",
+        "name": "Discover Categories",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "A8tNUmwBu8vhJ4qD",
+            "name": "Header Auth account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "url": "https://success.serviceitplus.com/HEAT/api/odata/businessobject/priorities",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "$top",
+                "value": "20"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          -816,
+          -112
+        ],
+        "id": "9841ac5f-e0e1-4833-b7c0-91d55b78c8dc",
+        "name": "Discover Priorities",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "A8tNUmwBu8vhJ4qD",
+            "name": "Header Auth account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "url": "https://success.serviceitplus.com/HEAT/api/odata/businessobject/servicereqs",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "$top",
+                "value": "50"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          -816,
+          96
+        ],
+        "id": "079ede0b-2881-4f22-8f04-a0c65819ea23",
+        "name": "Discover Service Request Offerings",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "A8tNUmwBu8vhJ4qD",
+            "name": "Header Auth account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Format discovery data for the Smart Agent\nlet categoriesData, prioritiesData, offeringsData;\n\ntry {\n  categoriesData = $('Discover Categories').first().json;\n} catch (e) {\n  console.log('Categories discovery failed:', e);\n  categoriesData = { value: [] };\n}\n\ntry {\n  prioritiesData = $('Discover Priorities').first().json;\n} catch (e) {\n  console.log('Priorities discovery failed:', e);\n  prioritiesData = { value: [] };\n}\n\ntry {\n  offeringsData = $('Discover Service Request Offerings').first().json;\n} catch (e) {\n  console.log('Offerings discovery failed:', e);\n  offeringsData = { value: [] };\n}\n\nconst categories = categoriesData.value || [];\nconst priorities = prioritiesData.value || [];\nconst offerings = offeringsData.value || [];\n\nconst formattedData = {\n  categories: categories.map(cat => ({\n    id: cat.RecId,\n    name: cat.Name,\n    description: cat.Description || ''\n  })),\n  priorities: priorities.map(pri => ({\n    id: pri.RecId,\n    name: pri.Name,\n    order: pri.PriorityOrder || 0,\n    description: pri.Description || ''\n  })),\n  serviceRequestOfferings: offerings.map(off => ({\n    id: off.RecId,\n    name: off.Name,\n    description: off.Description || ''\n  }))\n};\n\n// Merge with original data from Security & Data Prep\nconst originalData = $('Security & Data Prep').first().json;\n\nreturn [{\n  json: {\n    ...originalData,\n    ivantiConfig: formattedData,\n    availableCategories: formattedData.categories.length > 0\n      ? formattedData.categories.map(c => c.name).join(', ')\n      : 'Not available',\n    availablePriorities: formattedData.priorities.length > 0\n      ? formattedData.priorities.map(p => p.name).join(', ')\n      : 'Not available',\n    availableOfferings: formattedData.serviceRequestOfferings.length > 0\n      ? formattedData.serviceRequestOfferings.map(o => o.name).join(', ')\n      : 'Not available'\n  }\n}];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -560,
+          -112
+        ],
+        "id": "fc6c9f55-f27c-4b6d-992f-d4e8307117bc",
+        "name": "Format Discovery Data"
+      },
+      {
+        "parameters": {
+          "jsCode": "// PARSE OLLAMA JSON & RECOVER CONTEXT\nconst items = $input.all();\n\n// 1. Get the AI Response (from previous node)\nconst aiOutput = items[0].json;\nconst aiText = aiOutput.text || aiOutput.output || \"\";\n\n// 2. RECOVER CONTEXT\n// We grab the original context from Security & Data Prep.\nconst originalContext = $('Security & Data Prep').first().json;\n\n// 3. Clean and Parse JSON\nconst cleanJson = aiText.replace(/```json/g, '').replace(/```/g, '').trim();\n\nlet routeData = { intent: 'agent', entity: null };\ntry {\n  routeData = JSON.parse(cleanJson);\n} catch (e) {\n  // If parsing fails, default to agent\n  routeData = { intent: 'agent' };\n}\n\n// 4. Allow forcedIntent from the extension to override router decision\nlet route = routeData.intent || 'agent';\nif (originalContext.forcedIntent) {\n  route = originalContext.forcedIntent;\n}\n\n// 5. Merge Everything\nreturn [{\n  json: {\n    ...originalContext, // restores sessionId, userEmail, query, templateContext, etc.\n    route,\n    targetTicket: routeData.entity\n  }\n}];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -16,
+          -112
+        ],
+        "id": "d70180f1-78f6-4e79-b4d1-3fb0a3f2747c",
+        "name": "Parse Router Output"
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.route }}",
+                      "rightValue": "lookup",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "id": "ce8a976a-e831-4b6c-9b82-50b02b402f22"
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "id": "f22f04c2-0ebf-4c9f-a1d3-3cf44594c616",
+                      "leftValue": "={{ $json.route }}",
+                      "rightValue": "my_tickets",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals",
+                        "name": "filter.operator.equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "id": "48af9c03-571c-43a8-9168-083b55a4238b",
+                      "leftValue": "={{ $json.route }}",
+                      "rightValue": "agent",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals",
+                        "name": "filter.operator.equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.3,
+        "position": [
+          192,
+          -128
+        ],
+        "id": "971dedc0-d7ed-4de5-81bc-f9e3fe7600d4",
+        "name": "Switch"
+      },
+      {
+        "parameters": {
+          "url": "https://success.serviceitplus.com/HEAT/api/odata/businessobject/incidents",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "$filter",
+                "value": "=IncidentNumber eq '{{ $json.targetTicket }}'"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          512,
+          -432
+        ],
+        "id": "8ac2095b-1edf-4732-ae97-bb551e37c8ad",
+        "name": "Fast Lookup",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "A8tNUmwBu8vhJ4qD",
+            "name": "Header Auth account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "url": "https://success.serviceitplus.com/HEAT/api/odata/businessobject/incidents",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "$filter",
+                "value": "=ProfileLink_RecID eq '{{ $('Get User ID').first().json.value[0].RecId }}' and Status ne 'Closed'"
+              },
+              {
+                "name": "$top",
+                "value": "5"
+              },
+              {
+                "name": "$orderby",
+                "value": "CreatedDateTime desc"
+              }
+            ]
+          },
+          "options": {
+            "redirect": {
+              "redirect": {
+                "maxRedirects": 0
+              }
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          592,
+          -144
+        ],
+        "id": "13e5ac65-6139-4156-80d1-1a7ecba6ca55",
+        "name": "Get My Tickets",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "A8tNUmwBu8vhJ4qD",
+            "name": "Header Auth account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "={{ $json.query }}",
+          "options": {
+            "systemMessage": "=You are an expert Senior Service Desk Engineer specializing in Ivanti Neurons for ITSM. Your role is to help users efficiently resolve issues, find information, and manage their tickets within this organization's Ivanti environment.\\n\\n=== CORE PRINCIPLES ===\\n1. **Ivanti-Only Scope**: You ONLY work with this organization's Ivanti instance. Never use general knowledge or discuss other systems.\\n2. **Proactive Problem-Solving**: Anticipate user needs. If they ask about tickets, check them immediately. If they have an issue, search KB first before suggesting ticket creation.\\n3. **Efficiency First**: Minimize tool calls. Use conversation history. Don't ask for information you already have.\\n4. **User-Centric Communication**: Speak in plain language. No technical jargon. Assume users are non-technical.\\n5. **Context Awareness**: Remember previous messages. If user says \\\"check it again\\\", they mean their tickets. If they reference \\\"that issue\\\", use conversation history.\\n\\n=== YOUR CONTEXT ===\\n- User Email: {{ $json.userEmail }}\\n- Current Ticket (if on ticket page): {{ $json.userContext.ticketId || \\\"None\\\" }}\\n- Template Intent: {{ $json.templateAction || \\\"none\\\" }}\\n- Requires Follow-up: {{ $json.requiresFollowUp || false }}\\n- Available Config (for reference only): Categories, Priorities, Service Offerings from this Ivanti instance\\n\\n=== YOUR TOOLS (Use Strategically) ===\\n\\n**1. get_user_details**\\n- When: Need user's RecId to fetch their tickets\\n- Input: User email ({{ $json.userEmail }})\\n- Returns: RecId, Team, DisplayName\\n\\n**2. Get tickets agent**\\n- When: User asks about their tickets, or you need to check their open items\\n- Requires: RecId from get_user_details (pass as `recid` parameter)\\n- Returns: List of open incidents/requests\\n- Tip: Always call get_user_details FIRST, then immediately call this with the RecId\\n\\n**3. kb_search**\\n- When: User has a problem → ALWAYS check KB first before suggesting ticket creation\\n- Returns: Up to 50 most recent published KB articles\\n- Usage: Filter results mentally or present relevant matches to user\\n- If solution found: Share it. If not found: Then suggest creating a ticket.\\n\\n**4. firecrawl_search**\\n- When: User asks about Ivanti features/documentation AND kb_search didn't help\\n- Scope: Only searches help.ivanti.com and success.serviceitplus.com\\n- Use sparingly: Only for Ivanti-specific documentation questions\\n\\n**5. ivanti_metadata**\\n- When: Need to understand fields/templates for creating/updating tickets or KB articles\\n- Use BEFORE: Creating tickets, explaining field options, or constructing API payloads\\n- Prevents: Guessing field names or options\\n\\n**6. create_kb_article**\\n- When: You successfully solved a user's issue AND no existing KB covers it\\n- Prerequisites:\\n  ✓ Issue is fully resolved\\n  ✓ You checked kb_search - no similar solution exists\\n  ✓ Solution is reusable (not user-specific)\\n- Parameters: `title` (clear, descriptive), `details` (step-by-step instructions), `category` (optional)\\n- Result: Creates Draft article for review\\n- Always inform user: \\\"I've created a knowledge base article for this solution. It's in draft for review.\\\"\\n\\n=== DECISION TREES (Follow These Patterns) ===\\n\\n**User asks: \\\"Show my tickets\\\" / \\\"Check my tickets\\\" / \\\"What do I have open?\\\"**\\n→ get_user_details → Get tickets agent → Summarize (count, most recent, status)\\n\\n**User has a problem / asks for help**\\n→ kb_search (check for existing solution) → If found: Share solution → If not: Offer to create ticket\\n\\n**User asks about specific ticket (ticketId in context)**\\n→ Fetch ticket details → Summarize status, latest notes, next steps\\n\\n**User asks: \\\"Search KB for X\\\" / templateAction = \\\"search_kb\\\"**\\n→ If query incomplete: Ask \\\"What topic should I search for?\\\"\\n→ If clear: kb_search → Filter and present relevant results\\n\\n**User says: \\\"I need help\\\" / templateAction = \\\"get_help\\\"**\\n→ Acknowledge → Ask 1-2 clarifying questions → Offer options (check tickets, search KB, create incident, explain feature)\\n\\n**You successfully solve a user's issue**\\n→ Check kb_search for similar solutions → If none exist: create_kb_article → Inform user\\n\\n**User asks about Ivanti features/processes**\\n→ kb_search first → If not found: firecrawl_search (Ivanti docs only)\\n\\n**Need to create/update ticket and need field info**\\n→ ivanti_metadata (get field names/options) → Use real values from metadata\\n\\n=== COMMUNICATION RULES ===\\n\\n**Tone & Style:**\\n- Friendly, professional, empathetic\\n- Short sentences (2-4 sentences per response)\\n- Plain language - no acronyms, no API jargon, no technical terms\\n- Never mention: tools, JSON, APIs, OData, system internals\\n- Use examples and concrete steps\\n\\n**Response Structure (Always):**\\n1. Acknowledge what they asked\\n2. State what you're doing (in plain language)\\n3. Execute (call tools)\\n4. Present results clearly\\n\\n**When Tools Fail or Return Empty:**\\n- Be honest: \\\"I couldn't find that in Ivanti\\\"\\n- Suggest next step: \\\"Would you like me to create a new incident?\\\" or \\\"Let me search the knowledge base differently\\\"\\n- Never guess or make up data\\n\\n**Error Recovery:**\\n- If tool fails: Acknowledge, suggest alternative approach\\n- If data missing: Ask ONE clear question, don't guess\\n- If unclear input: Summarize what you understood, ask 1-2 specific questions\\n\\n=== SPECIAL SITUATIONS ===\\n\\n**Frustrated/Angry User:**\\n- Acknowledge: \\\"I understand this is frustrating\\\" or \\\"Sorry you're having trouble\\\"\\n- Stay calm, never mirror negativity\\n- Focus on solution: \\\"Let me check [specific action] right away\\\"\\n- Never blame user or other teams\\n\\n**Gibberish/Unclear Input:**\\n- Politely: \\\"I didn't quite understand that. Could you rephrase?\\\"\\n- Offer examples: \\\"You can say things like 'Show my tickets' or 'I need to reset my password'\\\"\\n- If partially clear: Summarize what you understood, ask 1-2 specific questions\\n\\n**Out-of-Scope Questions:**\\n- Politely: \\\"I can only help with Ivanti in your organization. This question is outside my scope.\\\"\\n- Offer: \\\"Is there something Ivanti-related I can help with instead?\\\"\\n\\n**Using Dynamic Configuration:**\\n- When presenting Categories/Priorities: Show 3-5 examples from availableCategories/availablePriorities\\n- Never dump full lists or invent values\\n- Use real names from Ivanti instance\\n- Convert to user-friendly format (not raw data structures)\\n\\n=== EFFICIENCY TIPS ===\\n- Use conversation history - don't re-ask for information already provided\\n- Batch related tool calls when possible\\n- If user says \\\"again\\\" or \\\"check it\\\", they mean the last thing you checked\\n- Remember context: If they're on a ticket page, they likely want info about that ticket\\n- Don't over-explain - be concise but helpful\\n\\n=== FINAL REMINDERS ===\\n- You are helping real people with real problems. Be empathetic and efficient.\\n- Every interaction should move toward resolution.\\n- When in doubt, ask ONE clear question rather than guessing.\\n- Always verify before creating KB articles - check if solution already exists.\\n- Keep responses focused and actionable.\\n\\n"
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 3,
+        "position": [
+          608,
+          176
+        ],
+        "id": "f64ce508-e3a8-4c01-b456-7c0380c81485",
+        "name": "Smart Agent"
+      },
+      {
+        "parameters": {
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+        "typeVersion": 1,
+        "position": [
+          416,
+          432
+        ],
+        "id": "672d764f-0c7d-43b4-976d-7bc69061821d",
+        "name": "Google Gemini Chat Model",
+        "credentials": {
+          "googlePalmApi": {
+            "id": "kTw3XamM72FSF12V",
+            "name": "Google Gemini(PaLM) Api account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "toolDescription": "List all Knowledge Base articles. Returns up to 50 most recently modified published articles. To search, the AI will filter results client-side or use a separate search tool.",
+          "url": "https://success.serviceitplus.com/HEAT/api/odata/businessobject/FRS_Knowledges",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "$select",
+                "value": "RecId,Title,Details,Status,CreatedDateTime,ModifiedDateTime"
+              },
+              {
+                "name": "$filter",
+                "value": "Status eq 'Published'"
+              },
+              {
+                "name": "$top",
+                "value": "50"
+              },
+              {
+                "name": "$orderby",
+                "value": "ModifiedDateTime desc"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequestTool",
+        "typeVersion": 4.3,
+        "position": [
+          800,
+          416
+        ],
+        "id": "2aa73435-85ec-47ff-8676-e82c06f26ee3",
+        "name": "kb_search",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "A8tNUmwBu8vhJ4qD",
+            "name": "Header Auth account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// UNIVERSAL FORMATTER (AI-First Edition)\nconst items = $input.all();\nif (!items.length) return [{ json: { response: \"No data.\" } }];\n\nconst data = items[0].json;\nlet output = \"\";\n\n// 1. Check if it came from the new AI Summarizer (or Smart Agent)\nif (data.text) {\n    output = data.text;\n} \nelse if (data.output) {\n    output = data.output;\n}\n// 2. Fallback: If for some reason raw API data got here directly\nelse if (data.value && Array.isArray(data.value)) {\n    // This shouldn't happen if you connected the AI Summarizer correctly, \n    // but it's a good safety net.\n    output = \"Raw Data: \" + data.value.map(t => `#${t.IncidentNumber}: ${t.Subject}`).join(', ');\n}\nelse {\n    output = JSON.stringify(data);\n}\n\nreturn [{ json: { response: output } }];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1184,
+          -112
+        ],
+        "id": "39c4e771-87ef-44a3-9ee3-5d3778900803",
+        "name": "Universal Formatter"
+      },
+      {
+        "parameters": {
+          "options": {}
+        },
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.4,
+        "position": [
+          1392,
+          -112
+        ],
+        "id": "de3b2ade-63fa-4878-92a7-19be7364d3c7",
+        "name": "Respond to Webhook"
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "ivanti-chat",
+          "responseMode": "responseNode",
+          "options": {
+            "binaryPropertyName": ""
+          }
+        },
+        "id": "392d74a6-f488-4062-820f-dfc15a72a5b8",
+        "name": "Webhook - Ivanti AI",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          -1328,
+          -112
+        ],
+        "webhookId": "25826745-fe6a-4989-a66d-c027f92c6836"
+      },
+      {
+        "parameters": {},
+        "type": "@n8n/n8n-nodes-langchain.memoryRedisChat",
+        "typeVersion": 1.5,
+        "position": [
+          592,
+          432
+        ],
+        "id": "9bae96da-cb08-492e-a2aa-e839e5be2d86",
+        "name": "Redis Chat Memory",
+        "credentials": {
+          "redis": {
+            "id": "euIZBYsJIsI5BeFI",
+            "name": "Redis account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "model": "gpt-oss:20b",
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.lmOllama",
+        "typeVersion": 1,
+        "position": [
+          768,
+          -64
+        ],
+        "id": "4643fb63-520c-41eb-840b-2d9128f440d3",
+        "name": "Ollama Model2",
+        "credentials": {
+          "ollamaApi": {
+            "id": "bQEKIlwhUYs7kwSw",
+            "name": "Ollama account 4"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "=You are a helpful, professional IT Service Desk Assistant.\nI have queried the database for the user. Below is the raw technical data returned.\n\nRAW DATA FROM IVANTI:\n{{ JSON.stringify($input.all().map(i => i.json)) }}\n\nINSTRUCTIONS:\n1. Analyze the raw data above.\n2. If the data is a specific ticket, tell the user the status, subject, and any recent notes in a conversational way.\n3. If the data is a list of tickets, summarize them (e.g., \"You have 3 open tickets. The most recent one is...\").\n4. If the raw data is empty or says \"value: []\", politely tell the user you couldn't find any matching records.\n5. Do NOT mention \"JSON\", \"API\", or \"OData\". Speak naturally.\n6. Keep it concise (under 3 sentences).",
+          "batching": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.chainLlm",
+        "typeVersion": 1.7,
+        "position": [
+          768,
+          -256
+        ],
+        "id": "e7ac3124-8daf-4342-9469-453d5a817d76",
+        "name": "AI Summarizer"
+      },
+      {
+        "parameters": {
+          "toolDescription": "Find a user's details (ID, Team, Email) by searching their email address or name.",
+          "url": "https://success.serviceitplus.com/HEAT/api/odata/businessobject/employees",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "$filter",
+                "value": "=LoginID eq '{{ $json.userEmail }}'"
+              },
+              {
+                "name": "$select",
+                "value": "RecId,LoginID,DisplayName,PrimaryEmail,Department,Team"
+              },
+              {
+                "name": "$top",
+                "value": "1"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequestTool",
+        "typeVersion": 4.3,
+        "position": [
+          976,
+          416
+        ],
+        "id": "9a04a09f-bbbc-4147-bfbc-d0bf24a25e6e",
+        "name": "get_user_details",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "A8tNUmwBu8vhJ4qD",
+            "name": "Header Auth account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "url": "https://success.serviceitplus.com/HEAT/api/odata/businessobject/employees",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "$filter",
+                "value": "=PrimaryEmail eq '{{ $json.userEmail }}'"
+              },
+              {
+                "name": "$select",
+                "value": "RecId"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          432,
+          -144
+        ],
+        "id": "c54b59e1-23b4-4dda-968c-cc752525758b",
+        "name": "Get User ID",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "A8tNUmwBu8vhJ4qD",
+            "name": "Header Auth account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "url": "https://success.serviceitplus.com/HEAT/api/odata/businessobject/incidents",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "$filter",
+                "value": "=ProfileLink_RecID eq '{{ $fromAI(\"recid\") }}' and Status ne 'Closed'"
+              },
+              {
+                "name": "$top",
+                "value": "5"
+              },
+              {
+                "name": "$orderby",
+                "value": "CreatedDateTime desc"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequestTool",
+        "typeVersion": 4.3,
+        "position": [
+          1152,
+          416
+        ],
+        "id": "cf8eb4b2-7ab9-4b33-b27e-78f423f5eb67",
+        "name": "Get tickets agent",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "A8tNUmwBu8vhJ4qD",
+            "name": "Header Auth account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "url": "https://api.firecrawl.dev/v1/search",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "query",
+                "value": "={{ $fromAI(\"query\") }}"
+              },
+              {
+                "name": "includeDomains",
+                "value": "[\"help.ivanti.com\", \"success.serviceitplus.com\"]"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequestTool",
+        "typeVersion": 4.3,
+        "position": [
+          800,
+          576
+        ],
+        "id": "bf0e8c49-c0f8-449a-8d2b-3d74aafce5f2",
+        "name": "firecrawl_search",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "15xnPmmgaKrlRruF",
+            "name": "Firecrawl"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "toolDescription": "Fetch Ivanti metadata (fields, templates, relationships) for a given business object name.",
+          "url": "https://success.serviceitplus.com/HEAT/api/odata/businessobject/Metadata",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "boName",
+                "value": "={{ $fromAI(\"boName\") }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequestTool",
+        "typeVersion": 4.3,
+        "position": [
+          976,
+          576
+        ],
+        "id": "87455650-b6d7-41a1-8867-8d6ea27753ea",
+        "name": "ivanti_metadata",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "A8tNUmwBu8vhJ4qD",
+            "name": "Header Auth account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "toolDescription": "Create a new Knowledge Base article. Use this when you successfully help a user solve an issue and no existing KB article covers the solution. Required parameters: 'title' (string), 'details' (string - the solution/instructions), 'category' (optional string). The article will be created in Draft status for review.",
+          "method": "POST",
+          "url": "https://success.serviceitplus.com/HEAT/api/odata/businessobject/FRS_Knowledges",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  \"Title\": $fromAI(\"title\"),\n  \"Details\": $fromAI(\"details\"),\n  \"Status\": \"Draft\"\n}) }}",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequestTool",
+        "typeVersion": 4.3,
+        "position": [
+          1152,
+          576
+        ],
+        "id": "bd79d9d7-da5d-4f10-865f-4d552e579f6c",
+        "name": "create_kb_article",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "A8tNUmwBu8vhJ4qD",
+            "name": "Header Auth account"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Basic LLM Chain": {
+        "main": [
+          [
+            {
+              "node": "Parse Router Output",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Ollama Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Basic LLM Chain",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Security & Data Prep": {
+        "main": [
+          [
+            {
+              "node": "Discover Categories",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Discover Priorities",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Discover Service Request Offerings",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Discover Categories": {
+        "main": [
+          [
+            {
+              "node": "Format Discovery Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Discover Priorities": {
+        "main": [
+          [
+            {
+              "node": "Format Discovery Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Discover Service Request Offerings": {
+        "main": [
+          [
+            {
+              "node": "Format Discovery Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Discovery Data": {
+        "main": [
+          [
+            {
+              "node": "Basic LLM Chain",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Router Output": {
+        "main": [
+          [
+            {
+              "node": "Switch",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch": {
+        "main": [
+          [
+            {
+              "node": "Fast Lookup",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Get User ID",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Smart Agent",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fast Lookup": {
+        "main": [
+          [
+            {
+              "node": "AI Summarizer",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get My Tickets": {
+        "main": [
+          [
+            {
+              "node": "AI Summarizer",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Smart Agent": {
+        "main": [
+          [
+            {
+              "node": "Universal Formatter",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Google Gemini Chat Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Smart Agent",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "kb_search": {
+        "ai_tool": [
+          [
+            {
+              "node": "Smart Agent",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Universal Formatter": {
+        "main": [
+          [
+            {
+              "node": "Respond to Webhook",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Webhook - Ivanti AI": {
+        "main": [
+          [
+            {
+              "node": "Security & Data Prep",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Redis Chat Memory": {
+        "ai_memory": [
+          [
+            {
+              "node": "Smart Agent",
+              "type": "ai_memory",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Ollama Model2": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "AI Summarizer",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "AI Summarizer": {
+        "main": [
+          [
+            {
+              "node": "Universal Formatter",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_user_details": {
+        "ai_tool": [
+          [
+            {
+              "node": "Smart Agent",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get User ID": {
+        "main": [
+          [
+            {
+              "node": "Get My Tickets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get tickets agent": {
+        "ai_tool": [
+          [
+            {
+              "node": "Smart Agent",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "firecrawl_search": {
+        "ai_tool": [
+          [
+            {
+              "node": "Smart Agent",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "ivanti_metadata": {
+        "ai_tool": [
+          [
+            {
+              "node": "Smart Agent",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_kb_article": {
+        "ai_tool": [
+          [
+            {
+              "node": "Smart Agent",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "pinData": {},
+    "meta": {
+      "templateCredsSetupCompleted": true,
+      "instanceId": "d01a6a8c11890acdbdc9cdddc68985eaa48ca0323d040fb817e6a87a3e72b287"
+    }
+  }

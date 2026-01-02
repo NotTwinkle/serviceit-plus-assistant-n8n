@@ -9,15 +9,21 @@
     "type": "module"
   },
   "host_permissions": [
-    "https://success.serviceitplus.com/*"
+    "https://success.serviceitplus.com/*",
+    "https://swhealthdemo-try.trysaasiteu.com/*",
+    "https://n8n.serviceitplus.com/*"
   ],
   "content_scripts": [
     {
-      "matches": ["https://success.serviceitplus.com/*"],
+      "matches": [
+        "https://success.serviceitplus.com/*",
+        "https://swhealthdemo-try.trysaasiteu.com/*"
+      ],
       "js": ["content.js"],
       "css": ["content.css"],
       "all_frames": false,
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "type": "module"
     }
   ],
   "icons": {
@@ -34,7 +40,10 @@
         "brute-force-scanner.js",
         "icons/*"
       ],
-      "matches": ["https://success.serviceitplus.com/*"]
+      "matches": [
+        "https://success.serviceitplus.com/*",
+        "https://swhealthdemo-try.trysaasiteu.com/*"
+      ]
     }
   ]
 }
