@@ -1,43 +1,40 @@
 {
-  "name": "Ivanti AI Intelligent Routing (Ollama + Gemini Agent)",
   "nodes": [
     {
       "parameters": {
-        "modelName": "models/gemini-2.5-flash-lite-preview-09-2025",
         "options": {}
       },
       "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
       "typeVersion": 1,
       "position": [
-        528,
-        32
+        720,
+        -16
       ],
-      "id": "a4a38fdd-ab7a-4741-a60d-71df520b3e52",
+      "id": "28cd08e0-3daf-4224-99bf-eb5f25807e8a",
       "name": "Google Gemini Chat Model2",
       "credentials": {
         "googlePalmApi": {
-          "id": "FSdsyn8rvipAhmpO",
-          "name": "Google Gemini(PaLM) Api account 2"
+          "id": "gkvBdqIXMpLOFucQ",
+          "name": "Google Gemini(PaLM) Api account 3"
         }
       }
     },
     {
       "parameters": {
-        "modelName": "models/gemini-2.0-flash-lite-preview",
         "options": {}
       },
       "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
       "typeVersion": 1,
       "position": [
-        -592,
-        192
+        -400,
+        144
       ],
-      "id": "af8833fd-ab95-4b03-87e7-8b6d6cda38ac",
+      "id": "ca8c3e7c-dc33-4856-8679-00dd90e79915",
       "name": "Google Gemini Chat Model1",
       "credentials": {
         "googlePalmApi": {
-          "id": "FSdsyn8rvipAhmpO",
-          "name": "Google Gemini(PaLM) Api account 2"
+          "id": "gkvBdqIXMpLOFucQ",
+          "name": "Google Gemini(PaLM) Api account 3"
         }
       }
     },
@@ -48,10 +45,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -256,
-        -32
+        -64,
+        -80
       ],
-      "id": "abcd7188-f4e3-43bf-80f2-bd3819a1c667",
+      "id": "443e4072-4e54-4931-9422-77c2fb9dc46e",
       "name": "Parse Router Output"
     },
     {
@@ -63,27 +60,27 @@
           "binaryPropertyName": ""
         }
       },
-      "id": "253260e0-9d55-4efd-acd3-468696d2b4b0",
+      "id": "ca78c8f0-44c2-4122-8ad9-a80227ab4e5b",
       "name": "Webhook - Ivanti AI",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        -2160,
-        -32
+        -1968,
+        -80
       ],
       "webhookId": "25826745-fe6a-4989-a66d-c027f92c6836"
     },
     {
       "parameters": {
-        "jsCode": "// UNIVERSAL FIX FOR n8n v1.121.3\n// Use $input.all() so this works regardless of how n8n groups data.\nconst items = $input.all();\n\n// Safety check: Did we get data?\nif (items.length === 0) {\n  return [{ json: { error: \"No data received\" } }];\n}\n\nconst firstItem = items[0].json;\n\n// 1. SECURITY CHECK\nconst clientSecret = firstItem.headers ? firstItem.headers['x-extension-secret'] : '';\n// NOTE: In this environment, Code nodes cannot read $env, so we keep a static secret here.\n// Make sure this matches the value your extension sends in the x-extension-secret header.\nconst mySecret = 'my-super-secret-password-123'; // <--- CHANGE THIS TO YOUR REAL SHARED SECRET\n\nif (clientSecret !== mySecret) {\n  // Use return instead of throw to avoid crashing the workflow\n  return [{ json: { error: \"Unauthorized\", authorized: false } }];\n}\n\n// 2. DATA NORMALIZATION\nconst payload = firstItem.body || firstItem;\nconst userEmail = payload.userLoginId || \"unknown_user\";\n\n// 3. Template context (from the extension)\nconst templateContext = payload.templateContext || null;\nconst requiresFollowUp = templateContext?.requiresFollowUp || false;\nconst templateAction = templateContext?.templateAction || null;\n\n// Optional: forced intent for bypassing or overriding the router decision\nconst forcedIntent = payload.forcedIntent || null;\n\n// 4. Extract Ivanti configuration (for dynamic URLs and auth)\nconst ivantiConfig = payload.ivantiConfig || {\n  baseUrl: \"https://success.serviceitplus.com\", // Fallback default\n  apiPathPrefix: \"/HEAT/api\", // Fallback default\n  apiKey: \"\" // Fallback default\n};\n\n// 5. Extract cookies for Ivanti API authentication (REQUIRED for Ivanti APIs)\nconst cookies = payload.cookies || \"\";\n\n// 6. Extract conversation history (CRITICAL for context)\n// Format: [{ role: 'user'|'assistant', content: '...', timestamp: ... }]\nconst conversationHistory = payload.conversationHistory || [];\n\n// Convert conversation history to format expected by LangChain/Redis Memory\n// Redis Chat Memory expects messages in format: [{ role: 'human'|'ai', content: '...' }]\nconst formattedHistory = conversationHistory.map(msg => {\n  return {\n    role: msg.role === 'user' ? 'human' : msg.role === 'assistant' ? 'ai' : msg.role,\n    content: msg.content || '',\n    timestamp: msg.timestamp || Date.now()\n  };\n});\n\n// Return a clean object with sessionId explicitly defined\nreturn [{\n  json: {\n    sessionId: userEmail, // Memory node needs this specific key\n    query: payload.message || \"\",\n    userEmail: userEmail,\n    userContext: {\n      ticketId: payload.ticketId || null,\n      url: payload.url || \"\"\n    },\n    templateContext,\n    requiresFollowUp,\n    templateAction,\n    forcedIntent,\n    ivantiConfig: ivantiConfig, // Critical for all downstream nodes\n    cookies: cookies, // Session cookies for Ivanti API authentication\n    conversationHistory: formattedHistory, // Formatted conversation history for Redis Memory\n    rawConversationHistory: conversationHistory // Keep original format for reference\n  }\n}];"
+        "jsCode": "// UNIVERSAL FIX FOR n8n v1.121.3\n// Use $input.all() so this works regardless of how n8n groups data.\nconst items = $input.all();\n\n// Safety check: Did we get data?\nif (items.length === 0) {\n  return [{ json: { error: \"No data received\" } }];\n}\n\nconst firstItem = items[0].json;\n\n// 1. SECURITY CHECK\nconst clientSecret = firstItem.headers ? firstItem.headers['x-extension-secret'] : '';\n// NOTE: In this environment, Code nodes cannot read $env, so we keep a static secret here.\n// Make sure this matches the value your extension sends in the x-extension-secret header.\nconst mySecret = 'my-super-secret-password-123'; // <--- CHANGE THIS TO YOUR REAL SHARED SECRET\n\nif (clientSecret !== mySecret) {\n  // Use return instead of throw to avoid crashing the workflow\n  return [{ json: { error: \"Unauthorized\", authorized: false } }];\n}\n\n// 2. DATA NORMALIZATION\nconst payload = firstItem.body || firstItem;\nconst userEmail = payload.userLoginId || \"unknown_user\";\n\n// 3. Template context (from the extension)\nconst templateContext = payload.templateContext || null;\nconst requiresFollowUp = templateContext?.requiresFollowUp || false;\nconst templateAction = templateContext?.templateAction || null;\n\n// Optional: forced intent for bypassing or overriding the router decision\nconst forcedIntent = payload.forcedIntent || null;\n\n// 4. Extract Ivanti configuration (for dynamic URLs and auth)\nconst ivantiConfig = payload.ivantiConfig || {\n  baseUrl: \"https://success.serviceitplus.com\", // Fallback default\n  apiPathPrefix: \"/HEAT/api\", // Fallback default\n  apiKey: \"\" // Fallback default\n};\n\n// 5. Extract cookies for Ivanti API authentication (REQUIRED for Ivanti APIs)\nconst cookies = payload.cookies || \"\";\n\n// 6. Extract conversation history (CRITICAL for context)\n// Format: [{ role: 'user'|'assistant', content: '...', timestamp: ... }]\nconst conversationHistory = payload.conversationHistory || [];\n\n// ✅ NEW: Extract previous thoughtSignature from extension (for Gemini 3.0 context continuity)\nconst previousThoughtSignature = payload.previousThoughtSignature || null;\n\n// Convert conversation history to format expected by LangChain/Redis Memory\n// Redis Chat Memory expects messages in format: [{ role: 'human'|'ai', content: '...' }]\n// ✅ ENHANCED: Preserve thoughtSignature in message structure if present\nconst formattedHistory = conversationHistory.map(msg => {\n  return {\n    role: msg.role === 'user' ? 'human' : msg.role === 'assistant' ? 'ai' : msg.role,\n    content: msg.content || '',\n    timestamp: msg.timestamp || Date.now(),\n    // ✅ NEW: Preserve thoughtSignature if present in message\n    thoughtSignature: msg.thoughtSignature || null\n  };\n});\n\n// Return a clean object with sessionId explicitly defined\nreturn [{\n  json: {\n    sessionId: userEmail, // Memory node needs this specific key\n    query: payload.message || \"\",\n    userEmail: userEmail,\n    userContext: {\n      ticketId: payload.ticketId || null,\n      url: payload.url || \"\"\n    },\n    templateContext,\n    requiresFollowUp,\n    templateAction,\n    forcedIntent,\n    ivantiConfig: ivantiConfig, // Critical for all downstream nodes\n    cookies: cookies, // Session cookies for Ivanti API authentication\n    conversationHistory: formattedHistory, // Formatted conversation history for Redis Memory\n    rawConversationHistory: conversationHistory, // Keep original format for reference\n    // ✅ NEW: Pass previous thoughtSignature to Smart Agent for Gemini 3.0\n    previousThoughtSignature: previousThoughtSignature\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1936,
-        -32
+        -1744,
+        -80
       ],
-      "id": "fd423d95-a2ae-4157-a3f1-5e4bccbdc12b",
+      "id": "3afce325-97f7-4d3b-a064-6f2299734bb2",
       "name": "Security & Data Prep"
     },
     {
@@ -127,10 +124,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        -1280,
-        160
+        -1088,
+        112
       ],
-      "id": "a5de1b28-b4d7-45ed-88e1-8cef3b1c59ea",
+      "id": "5b991ca5-0194-4345-9beb-c3f2a996724b",
       "name": "Discover Service Request Offerings"
     },
     {
@@ -174,10 +171,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        -1280,
-        -32
+        -1088,
+        -80
       ],
-      "id": "2679f8b9-11d8-4d8a-96f8-acdea1aa86e9",
+      "id": "5335dca5-9982-4df4-9857-8802f23c8312",
       "name": "Discover Priorities"
     },
     {
@@ -221,10 +218,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        -1280,
-        -240
+        -1088,
+        -288
       ],
-      "id": "8fbcf07d-1deb-4ed4-98c3-26fef7d318f9",
+      "id": "8e8e2eaa-34f9-4a21-a410-1d4cb86f0768",
       "name": "Discover Categories"
     },
     {
@@ -234,10 +231,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1024,
-        -32
+        -832,
+        -80
       ],
-      "id": "c6e52bbe-ef55-41d7-9dde-5f3aa7fc01e6",
+      "id": "3e9e1921-e908-45b0-aaab-1bd3bd0fa490",
       "name": "Format Discovery Data"
     },
     {
@@ -256,10 +253,10 @@
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
       "typeVersion": 1.7,
       "position": [
-        -608,
-        -32
+        -416,
+        -80
       ],
-      "id": "2631659e-d7bb-4987-b0d8-5ec1206a5645",
+      "id": "0f45dda4-ab75-4f8f-9835-58ffed087dd7",
       "name": "Basic LLM Chain"
     },
     {
@@ -271,10 +268,10 @@
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
       "typeVersion": 1.7,
       "position": [
-        528,
-        -176
+        720,
+        -224
       ],
-      "id": "29ea7c4b-3184-4881-ae6a-6b585dc1625f",
+      "id": "3ea84bd3-c0f1-423c-b6e0-558c3f2cd9cd",
       "name": "AI Summarizer"
     },
     {
@@ -300,10 +297,10 @@
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
       "position": [
-        560,
-        656
+        752,
+        608
       ],
-      "id": "f7f4fd2d-96e6-4a6b-acf8-2fcd7d221a7c",
+      "id": "ed2081e8-14aa-464b-aed4-f577e892d303",
       "name": "firecrawl_search",
       "credentials": {
         "httpHeaderAuth": {
@@ -347,10 +344,10 @@
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
       "position": [
-        736,
-        656
+        928,
+        608
       ],
-      "id": "365406be-3e51-426c-a0c3-44c62574bd5e",
+      "id": "643b0b0e-c119-49e2-b5e4-96fb3bfa2dc7",
       "name": "ivanti_metadata"
     },
     {
@@ -387,10 +384,10 @@
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
       "position": [
-        912,
-        656
+        1104,
+        608
       ],
-      "id": "999d3795-a5d3-42e4-b020-d51ab1cbad85",
+      "id": "51bce5af-6e07-48fb-8140-7ba11aa9f9a6",
       "name": "create_kb_article"
     },
     {
@@ -435,10 +432,10 @@
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
       "position": [
-        912,
-        496
+        1104,
+        448
       ],
-      "id": "fe5f0a69-c0be-4c19-85bb-240ff6cc1420",
+      "id": "fcc8092f-1734-4628-a435-3110219b00cd",
       "name": "Get tickets agent"
     },
     {
@@ -484,30 +481,142 @@
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
       "position": [
-        736,
-        496
+        928,
+        448
       ],
-      "id": "78e96a7a-1dd1-4965-9b74-5f1c16fa78d7",
+      "id": "3ef2faf6-a05c-4aff-8985-fb2dce6a9ea1",
       "name": "get_user_details"
     },
     {
       "parameters": {
-        "toolDescription": "Search Knowledge Base articles. Returns up to 500 most recently modified articles. YOU MUST: 1) Filter results to only show articles where Status = 'Published' (ignore Draft, Rejected, etc.), 2) Search through Title and Details fields for keywords matching the user's query (case-insensitive), 3) Present matching articles to the user. If no matches found after filtering for Published status, say 'I couldn't find a published article about [topic] in the knowledge base.'",
-        "url": "={{ $json.ivantiConfig.baseUrl }}{{ $json.ivantiConfig.apiPathPrefix }}/odata/businessobject/FRS_Knowledges",
+        "toolDescription": "Create a new incident/ticket. USE THIS ONLY AS LAST RESORT (Layer 3) - after KB search and web search both failed. Required parameters: 'subject' (string - brief description), 'description' (string - detailed issue description), 'category' (optional string - use ivanti_metadata first to get valid categories), 'priority' (optional string - use ivanti_metadata first to get valid priorities). Returns the created incident number.",
+        "method": "POST",
+        "url": "={{ $json.ivantiConfig.baseUrl }}{{ $json.ivantiConfig.apiPathPrefix }}/odata/businessobject/incidents",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'rest_api_key=' + ($json.ivantiConfig && $json.ivantiConfig.apiKey ? $json.ivantiConfig.apiKey : '') }}"
+            },
+            {
+              "name": "Cookie",
+              "value": "={{ $json.cookies || '' }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  \"Subject\": $fromAI(\"subject\"),\n  \"Description\": $fromAI(\"description\"),\n  \"Category\": $fromAI(\"category\") || null,\n  \"Priority\": $fromAI(\"priority\") || null,\n  \"Status\": \"Logged\"\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1104,
+        368
+      ],
+      "id": "create-incident-tool-id",
+      "name": "create_incident"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Update an existing ticket/incident. Use this when user wants to add notes, change status, or update any field. Required parameters: 'incidentId' (string - the ticket/incident number or RecId), 'notes' (optional string - additional notes to add), 'status' (optional string - new status like 'In Progress', 'Resolved', 'Closed').",
+        "method": "PATCH",
+        "url": "={{ $json.ivantiConfig.baseUrl }}{{ $json.ivantiConfig.apiPathPrefix }}/odata/businessobject/incidents({{ $fromAI(\"incidentId\") }})",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'rest_api_key=' + ($json.ivantiConfig && $json.ivantiConfig.apiKey ? $json.ivantiConfig.apiKey : '') }}"
+            },
+            {
+              "name": "Cookie",
+              "value": "={{ $json.cookies || '' }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  \"Notes\": $fromAI(\"notes\") || null,\n  \"Status\": $fromAI(\"status\") || null\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1280,
+        368
+      ],
+      "id": "update-ticket-tool-id",
+      "name": "update_ticket"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Close a ticket/incident. Use this when user confirms their issue is resolved and they have an open ticket. Required parameters: 'incidentId' (string - the ticket/incident number or RecId), 'resolution' (optional string - brief description of how it was resolved).",
+        "method": "PATCH",
+        "url": "={{ $json.ivantiConfig.baseUrl }}{{ $json.ivantiConfig.apiPathPrefix }}/odata/businessobject/incidents({{ $fromAI(\"incidentId\") }})",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'rest_api_key=' + ($json.ivantiConfig && $json.ivantiConfig.apiKey ? $json.ivantiConfig.apiKey : '') }}"
+            },
+            {
+              "name": "Cookie",
+              "value": "={{ $json.cookies || '' }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  \"Status\": \"Closed\",\n  \"Resolution\": $fromAI(\"resolution\") || \"Resolved by user with AI assistance\"\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1456,
+        368
+      ],
+      "id": "close-ticket-tool-id",
+      "name": "close_ticket"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Check the status of a ticket/incident. Use this when user asks about ticket status or wants to follow up. Required parameters: 'incidentId' (string - the ticket/incident number or RecId). Returns current status, latest notes, assigned team, and other details.",
+        "url": "={{ $json.ivantiConfig.baseUrl }}{{ $json.ivantiConfig.apiPathPrefix }}/odata/businessobject/incidents({{ $fromAI(\"incidentId\") }})",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
             {
-              "name": "$top",
-              "value": "500"
-            },
-            {
-              "name": "$orderby",
-              "value": "ModifiedDateTime desc"
-            },
-            {
               "name": "$select",
-              "value": "RecId,Title,Details,Status,ArticleNumber,Collection,Category,Subcategory,Type"
+              "value": "IncidentNumber,Subject,Status,Description,Notes,AssignedTeam,AssignedTo,CreatedDateTime,LastModDateTime"
             }
           ]
         },
@@ -533,10 +642,63 @@
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
       "position": [
-        560,
-        496
+        1632,
+        368
       ],
-      "id": "ffd00c6c-a8f5-4ac8-8b46-0da4375bc4a0",
+      "id": "check-ticket-status-tool-id",
+      "name": "check_ticket_status"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Search Knowledge Base articles. Returns up to 200 most recently modified articles. YOU MUST: 1) Filter results to only show articles where Status = 'Published' (ignore Draft, Rejected, Expired, etc.), 2) Search through Title and Details fields for keywords matching the user's query (case-insensitive), 3) Present matching articles to the user. If no matches found after filtering for Published status, say 'I couldn't find a published article about [topic] in the knowledge base.' Note: The API returns fields like RecId, Title, Details, Status, KnowledgeNumber, LastModDateTime, etc.",
+        "url": "={{ $json.ivantiConfig.baseUrl }}{{ $json.ivantiConfig.apiPathPrefix }}/odata/businessobject/FRS_Knowledges",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$top",
+              "value": "200"
+            },
+            {
+              "name": "$orderby",
+              "value": "LastModDateTime desc"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'rest_api_key=' + ($json.ivantiConfig && $json.ivantiConfig.apiKey ? $json.ivantiConfig.apiKey : '') }}"
+            },
+            {
+              "name": "Cookie",
+              "value": "={{ $json.cookies || '' }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json",
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        752,
+        448
+      ],
+      "id": "8165ba43-679e-46bc-b8f0-0a98ddfc8937",
       "name": "kb_search"
     },
     {
@@ -544,10 +706,10 @@
       "type": "@n8n/n8n-nodes-langchain.memoryRedisChat",
       "typeVersion": 1.5,
       "position": [
-        352,
-        512
+        544,
+        464
       ],
-      "id": "f68127de-a222-40de-ab09-f91d0adcee5f",
+      "id": "808f36e9-26b6-4d05-8a63-e7e5823c0cda",
       "name": "Redis Chat Memory",
       "credentials": {
         "redis": {
@@ -558,21 +720,21 @@
     },
     {
       "parameters": {
-        "modelName": "models/gemini-2.5-flash-lite-preview-09-2025",
+        "modelName": "models/gemini-3-flash-preview",
         "options": {}
       },
       "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
       "typeVersion": 1,
       "position": [
-        176,
-        512
+        368,
+        464
       ],
-      "id": "77e05ec9-1b3d-4678-9682-db20908aaa19",
+      "id": "e399aed2-1256-4321-8ef1-3f28a8c255de",
       "name": "Google Gemini Chat Model",
       "credentials": {
         "googlePalmApi": {
-          "id": "FSdsyn8rvipAhmpO",
-          "name": "Google Gemini(PaLM) Api account 2"
+          "id": "gkvBdqIXMpLOFucQ",
+          "name": "Google Gemini(PaLM) Api account 3"
         }
       }
     },
@@ -581,16 +743,16 @@
         "promptType": "define",
         "text": "={{ $json.query }}",
         "options": {
-          "systemMessage": "=You are an expert Senior Service Desk Engineer specializing in Ivanti Neurons for ITSM. Your role is to help users efficiently resolve issues, find information, and manage their tickets within this organization's Ivanti environment.\n\n=== CORE PRINCIPLES ===\n1. **Ivanti-Only Scope**: You ONLY work with this organization's Ivanti instance. Never use general knowledge or discuss other systems.\n2. **Proactive Problem-Solving**: Anticipate user needs. If they ask about tickets, check them immediately. If they have an issue, search KB first before suggesting ticket creation.\n3. **Efficiency First**: Minimize tool calls. Use conversation history. Don't ask for information you already have.\n4. **User-Centric Communication**: Speak in plain language. No technical jargon. Assume users are non-technical.\n5. **Context Awareness - CRITICAL**: You have access to conversation history through Redis Memory. ALWAYS use it:\n   - If user says \"search the knowledge base\" and then says \"list 10 of them\", they mean the KB articles from the previous search\n   - If user says \"check it again\", they mean the last thing you checked (tickets, KB, etc.)\n   - If user references \"that issue\" or \"the problem\", look at conversation history to understand what they're referring to\n   - When user clicks a button (like \"Search KB\"), remember that action in the conversation context\n   - ALWAYS review the conversation history before responding to understand the full context\n\n=== YOUR CONTEXT ===\n- User Email: {{ $json.userEmail }}\n- Current Ticket (if on ticket page): {{ $json.userContext.ticketId || \"None\" }}\n- Template Intent: {{ $json.templateAction || \"none\" }}\n- Requires Follow-up: {{ $json.requiresFollowUp || false }}\n- Available Categories (from this Ivanti instance): {{ $json.availableCategories || \"Not available\" }}\n- Available Priorities (from this Ivanti instance): {{ $json.availablePriorities || \"Not available\" }}\n- Available Service Offerings (from this Ivanti instance): {{ $json.availableOfferings || \"Not available\" }}\n\n=== YOUR TOOLS (Use Strategically) ===\n\n**1. get_user_details**\n- When: Need user's RecId to fetch their tickets\n- Input: User email ({{ $json.userEmail }})\n- Returns: RecId, Team, DisplayName\n\n**2. Get tickets agent**\n- When: User asks about their tickets, or you need to check their open items\n- Requires: RecId from get_user_details (pass as `recid` parameter)\n- Returns: List of open incidents/requests\n- Tip: Always call get_user_details FIRST, then immediately call this with the RecId\n\n**3. kb_search**\n- When: User has a problem → ALWAYS check KB first before suggesting ticket creation\n- Returns: Up to 500 most recent KB articles (includes Published, Draft, Rejected)\n- CRITICAL SEARCH PROCESS:\n  1. Filter results to ONLY show articles where Status = 'Published' (ignore Draft, Rejected, etc.)\n  2. Search through Title and Details fields for keywords matching user's query (case-insensitive)\n  3. Look for partial matches - if user says \"bullying\", search for \"bully\", \"report bullying\", \"bullying issue\", etc.\n  4. If you find matching Published articles: Share the Title and key details\n  5. If NO matching Published articles found: Say \"I couldn't find a published article about [topic] in the knowledge base. Would you like me to create a ticket?\"\n- NEVER say \"I couldn't find\" unless you've actually searched through ALL Published articles in the results\n\n**4. firecrawl_search**\n- When: User asks about Ivanti features/documentation AND kb_search didn't help\n- Scope: Only searches help.ivanti.com and success.serviceitplus.com\n- Use sparingly: Only for Ivanti-specific documentation questions\n\n**5. ivanti_metadata**\n- When: Need to understand fields/templates for creating/updating tickets or KB articles\n- Use BEFORE: Creating tickets, explaining field options, or constructing API payloads\n- Prevents: Guessing field names or options\n\n**6. create_kb_article**\n- When: You successfully solved a user's issue AND no existing KB covers it\n- Prerequisites:\n  ✓ Issue is fully resolved\n  ✓ You checked kb_search - no similar solution exists\n  ✓ Solution is reusable (not user-specific)\n- Parameters: `title` (clear, descriptive), `details` (step-by-step instructions), `category` (optional)\n- Result: Creates Draft article for review\n- Always inform user: \"I've created a knowledge base article for this solution. It's in draft for review.\"\n\n=== DECISION TREES (Follow These Patterns) ===\n\n**User asks: \"Show my tickets\" / \"Check my tickets\" / \"What do I have open?\"**\n→ get_user_details → Get tickets agent → Summarize (count, most recent, status)\n\n**User has a problem / asks for help**\n→ kb_search (check for existing solution) → If found: Share solution → If not: Offer to create ticket\n\n**User asks about specific ticket (ticketId in context)**\n→ Fetch ticket details → Summarize status, latest notes, next steps\n\n**User asks: \"Search KB for X\" / templateAction = \"search_kb\"**\n→ If query incomplete: Ask \"What topic should I search for?\"\n→ If clear: kb_search → Filter and present relevant results\n\n**User says: \"I need help\" / templateAction = \"get_help\"**\n→ Acknowledge → Ask 1-2 clarifying questions → Offer options (check tickets, search KB, create incident, explain feature)\n\n**You successfully solve a user's issue**\n→ Check kb_search for similar solutions → If none exist: create_kb_article → Inform user\n\n**User asks about Ivanti features/processes**\n→ kb_search first → If not found: firecrawl_search (Ivanti docs only)\n\n**Need to create/update ticket and need field info**\n→ ivanti_metadata (get field names/options) → Use real values from metadata\n\n=== COMMUNICATION RULES ===\n\n**Tone & Style:**\n- Friendly, professional, empathetic\n- Short sentences (2-4 sentences per response)\n- Plain language - no acronyms, no API jargon, no technical terms\n- Never mention: tools, JSON, APIs, OData, system internals\n- Use examples and concrete steps\n\n**Response Structure (Always):**\n1. Acknowledge what they asked\n2. State what you're doing (in plain language)\n3. Execute (call tools)\n4. Present results clearly\n\n**When Tools Fail or Return Empty:**\n- Be honest: \"I couldn't find that in Ivanti\"\n- Suggest next step: \"Would you like me to create a new incident?\" or \"Let me search the knowledge base differently\"\n- Never guess or make up data\n\n**Error Recovery:**\n- If tool fails: Acknowledge, suggest alternative approach\n- If data missing: Ask ONE clear question, don't guess\n- If unclear input: Summarize what you understood, ask 1-2 specific questions\n\n=== SPECIAL SITUATIONS ===\n\n**Frustrated/Angry User:**\n- Acknowledge: \"I understand this is frustrating\" or \"Sorry you're having trouble\"\n- Stay calm, never mirror negativity\n- Focus on solution: \"Let me check [specific action] right away\"\n- Never blame user or other teams\n\n**Gibberish/Unclear Input:**\n- Politely: \"I didn't quite understand that. Could you rephrase?\"\n- Offer examples: \"You can say things like 'Show my tickets' or 'I need to reset my password'\"\n- If partially clear: Summarize what you understood, ask 1-2 specific questions\n\n**Out-of-Scope Questions:**\n- Politely: \"I can only help with Ivanti in your organization. This question is outside my scope.\"\n- Offer: \"Is there something Ivanti-related I can help with instead?\"\n\n**Using Dynamic Configuration:**\n- When presenting Categories/Priorities: Show 3-5 examples from availableCategories/availablePriorities\n- Never dump full lists or invent values\n- Use real names from Ivanti instance ({{ $json.availableCategories }}, {{ $json.availablePriorities }}, {{ $json.availableOfferings }})\n- Convert to user-friendly format (not raw data structures)\n\n=== EFFICIENCY TIPS ===\n- Use conversation history - don't re-ask for information already provided\n- Batch related tool calls when possible\n- If user says \"again\" or \"check it\", they mean the last thing you checked\n- Remember context: If they're on a ticket page, they likely want info about that ticket\n- Don't over-explain - be concise but helpful\n\n=== FINAL REMINDERS ===\n- You are helping real people with real problems. Be empathetic and efficient.\n- Every interaction should move toward resolution.\n- When in doubt, ask ONE clear question rather than guessing.\n- Always verify before creating KB articles - check if solution already exists.\n- Keep responses focused and actionable.\n\n"
+          "systemMessage": "=You are an expert Senior Service Desk Engineer specializing in Ivanti Neurons for ITSM. Your role is to help users efficiently resolve issues WITHOUT creating tickets whenever possible. Your PRIMARY GOAL is ticket prevention through self-service resolution.\n\n=== 🔍 AGENTIC DIAGNOSTIC APPROACH (TOKEN-EFFICIENT) ===\n\n**CRITICAL:** You are an INVESTIGATIVE AGENT, but you must be TOKEN-EFFICIENT. Ask ONE comprehensive question, not multiple sequential questions.\n\n**TOKEN-EFFICIENT DIAGNOSTIC PROCESS:**\n1. **ASK ONE COMPREHENSIVE QUESTION** - Combine all diagnostic points into a single question:\n   - ❌ BAD (wastes tokens): \"How many tabs? What applications? When did it start?\"\n   - ✅ GOOD (token-efficient): \"To diagnose this quickly: How many browser tabs are open, what applications are running, and when did the slowness start?\"\n\n2. **USE STRUCTURED FORMATS** - Ask for answers in a format that's easy to parse:\n   - \"Quick check: How many browser tabs open? (count them) | What apps running? (list 2-3 main ones) | When did it start? (today/this week/longer)\"\n   - This gets all info in ONE response, saving tokens\n\n3. **PROVIDE TARGETED SOLUTIONS** - Based on their single comprehensive answer, give specific steps:\n   - If \"20 tabs, Chrome and Outlook, started today\": \"20 tabs is likely the cause. Close unnecessary tabs: Press Ctrl+W (Windows) or Cmd+W (Mac) repeatedly to close tabs. Keep only 5-10 essential tabs open. This should help immediately.\"\n   - If \"5 tabs, Photoshop and video editor, been slow for weeks\": \"Since it's been slow for weeks with heavy apps, let's check disk space: Press Windows+R, type 'cleanmgr', press Enter. Select C: drive. If it shows less than 10% free, that's the issue - we need to free up space.\"\n\n4. **VERIFY IN ONE QUESTION** - Don't ask multiple verification questions:\n   - ❌ BAD: \"Is it faster? Did that help? Are you still having issues?\"\n   - ✅ GOOD: \"After closing those tabs, is your laptop faster now, or still slow?\"\n\n**TOKEN EFFICIENCY RULES:**\n- ✅ Ask ONE comprehensive question that covers all diagnostic points\n- ✅ Use structured formats (\"X | Y | Z\") to get multiple answers at once\n- ✅ Provide targeted solution based on their single answer\n- ✅ Verify with ONE question that covers all outcomes\n- ❌ NEVER ask sequential questions (wastes tokens)\n- ❌ NEVER ask questions you can infer from context\n- ❌ NEVER repeat information already in conversation history\n\n=== 🎯 MANDATORY LAYERED RESOLUTION FLOW (TICKET PREVENTION STRATEGY) ===\n\n**CRITICAL:** You MUST follow this exact order. DO NOT skip layers. DO NOT create tickets unless ALL previous layers fail.\n\n**LAYER 1: Knowledge Base (KB) Search**\n1. User reports a problem → IMMEDIATELY call `kb_search`\n2. Filter results for Status = 'Published' only\n3. Search Title and Details for keywords matching user's issue\n4. If matching KB article found → Share solution → Wait for user confirmation\n5. If user confirms \"it's fixed\" or \"that worked\" → Proceed to KB Creation (below)\n6. If NO matching KB found → Proceed to Layer 2\n\n**LAYER 2: Web/Internet Search**\n1. If KB didn't help → Call `firecrawl_search` or use your general knowledge\n2. Try to find solution online or use your training data\n3. Share solution with user → Wait for user confirmation\n4. If user confirms \"it's fixed\" → Proceed to KB Creation (below)\n5. If still not resolved → Proceed to Layer 3\n\n**LAYER 3: Ticket Creation (LAST RESORT)**\n1. ONLY create ticket if:\n   - KB search found nothing relevant\n   - Web search didn't help\n   - User explicitly requests a ticket\n   - Issue requires human intervention (hardware, access approval, etc.)\n2. Use `create_incident` tool with proper details\n3. Inform user: \"I've created ticket #[number] for you. The team will follow up.\"\n\n**AUTOMATIC KB CREATION (After Successful Resolution):**\n- When user confirms issue is resolved (\"it's fixed\", \"that worked\", \"thanks\", etc.)\n- AND you solved it using Layer 1 (KB) or Layer 2 (Web)\n- AND no similar KB article exists\n- THEN automatically call `create_kb_article` with:\n  - Title: Clear, descriptive title of the issue\n  - Details: Step-by-step solution you provided\n  - Category: Appropriate category if known\n- Inform user: \"I've created a knowledge base article for this solution so others can benefit.\"\n\n=== CORE PRINCIPLES ===\n1. **Ticket Prevention First**: Your goal is to solve issues WITHOUT tickets. Only create tickets when absolutely necessary.\n2. **Ivanti-Only Scope**: You ONLY work with this organization's Ivanti instance. Never use general knowledge or discuss other systems.\n3. **Efficiency First**: Minimize tool calls. Use conversation history. Don't ask for information you already have.\n4. **User-Centric Communication**: Speak in plain language. No technical jargon. Assume users are non-technical.\n5. **Context Awareness - CRITICAL**: You have access to conversation history through Redis Memory. ALWAYS use it:\n   - If user says \"search the knowledge base\" and then says \"list 10 of them\", they mean the KB articles from the previous search\n   - If user says \"check it again\", they mean the last thing you checked (tickets, KB, etc.)\n   - If user references \"that issue\" or \"the problem\", look at conversation history to understand what they're referring to\n   - When user clicks a button (like \"Search KB\"), remember that action in the conversation context\n   - ALWAYS review the conversation history before responding to understand the full context\n\n=== YOUR CONTEXT ===\n- User Email: {{ $json.userEmail }}\n- Current Ticket (if on ticket page): {{ $json.userContext.ticketId || \"None\" }}\n- Template Intent: {{ $json.templateAction || \"none\" }}\n- Requires Follow-up: {{ $json.requiresFollowUp || false }}\n- Available Categories (from this Ivanti instance): {{ $json.availableCategories || \"Not available\" }}\n- Available Priorities (from this Ivanti instance): {{ $json.availablePriorities || \"Not available\" }}\n- Available Service Offerings (from this Ivanti instance): {{ $json.availableOfferings || \"Not available\" }}\n\n=== YOUR TOOLS (Use Strategically) ===\n\n**1. get_user_details**\n- When: Need user's RecId to fetch their tickets\n- Input: User email ({{ $json.userEmail }})\n- Returns: RecId, Team, DisplayName\n\n**2. Get tickets agent**\n- When: User asks about their tickets, or you need to check their open items\n- Requires: RecId from get_user_details (pass as `recid` parameter)\n- Returns: List of open incidents/requests\n- Tip: Always call get_user_details FIRST, then immediately call this with the RecId\n\n**3. kb_search**\n- When: User has a problem → ALWAYS check KB first before suggesting ticket creation\n- Returns: Up to 500 most recent KB articles (includes Published, Draft, Rejected)\n- CRITICAL SEARCH PROCESS:\n  1. Filter results to ONLY show articles where Status = 'Published' (ignore Draft, Rejected, etc.)\n  2. Search through Title and Details fields for keywords matching user's query (case-insensitive)\n  3. Look for partial matches - if user says \"bullying\", search for \"bully\", \"report bullying\", \"bullying issue\", etc.\n  4. If you find matching Published articles: Share the Title and key details\n  5. If NO matching Published articles found: Say \"I couldn't find a published article about [topic] in the knowledge base. Would you like me to create a ticket?\"\n- NEVER say \"I couldn't find\" unless you've actually searched through ALL Published articles in the results\n\n**4. firecrawl_search**\n- When: Layer 2 - KB didn't help, try web search\n- Scope: Searches help.ivanti.com and success.serviceitplus.com\n- Use: After kb_search fails, before creating tickets\n- Purpose: Find solutions online that aren't in KB yet\n\n**5. ivanti_metadata**\n- When: Need to understand fields/templates for creating/updating tickets or KB articles\n- Use BEFORE: Creating tickets, explaining field options, or constructing API payloads\n- Prevents: Guessing field names or options\n\n**6. create_kb_article**\n- When: AUTOMATIC after successful resolution (Layer 1 or Layer 2)\n- Trigger: User confirms \"it's fixed\", \"that worked\", \"thanks\", etc.\n- Prerequisites:\n  ✓ Issue is fully resolved\n  ✓ You checked kb_search - no similar solution exists\n  ✓ Solution is reusable (not user-specific)\n- Parameters: `title` (clear, descriptive), `details` (step-by-step instructions), `category` (optional)\n- Result: Creates Draft article for review\n- Always inform user: \"I've created a knowledge base article for this solution so others can benefit.\"\n\n**7. create_incident** (LAST RESORT - Layer 3)\n- When: ONLY after KB search AND web search both failed\n- OR: User explicitly requests a ticket\n- OR: Issue requires human intervention (hardware, approvals, etc.)\n- Parameters: Subject, Description, Category, Priority (use ivanti_metadata first to get valid options)\n- Returns: Incident number\n- Inform user: \"I've created ticket #[number] for you. The team will follow up.\"\n\n**8. update_ticket**\n- When: User wants to add information to an existing ticket\n- Requires: Ticket ID (from userContext.ticketId or user provides it)\n- Parameters: Ticket ID, update fields (Notes, Status, etc.)\n\n**9. close_ticket**\n- When: User confirms issue is resolved AND they have an open ticket\n- Requires: Ticket ID\n- Action: Update ticket status to 'Closed'\n- Follow-up: Offer survey (if implemented)\n\n**10. check_ticket_status**\n- When: User asks about ticket status or wants to follow up\n- Requires: Ticket ID or Incident Number\n- Returns: Current status, latest updates, assigned team\n\n=== 🔍 DIAGNOSTIC PATTERNS (Common Issues) ===\n\n**SLOW LAPTOP / PERFORMANCE ISSUES:**\n1. Ask ONE question: \"Quick diagnostic: How many browser tabs open? | What main applications running? | When did slowness start? (today/this week/longer)\"\n2. Based on their single answer, provide targeted solution:\n   - \"20 tabs, Chrome/Outlook, today\": \"20 tabs is the likely cause. Close unnecessary tabs: Press Ctrl+W repeatedly to close tabs. Keep only 5-10 essential ones. Is it faster now?\"\n   - \"5 tabs, Photoshop/Video editor, weeks\": \"Heavy apps + long-term slowness suggests disk space. Press Windows+R, type 'cleanmgr', press Enter. Select C: drive. If <10% free, that's the issue. What does it show?\"\n   - \"10 tabs, just browser, today\": \"Since it started today with normal usage, let's check Task Manager: Press Ctrl+Shift+Esc. In the 'CPU' column, are any programs using >50%? If yes, right-click and 'End Task' for programs you don't need. Did that help?\"\n\n**CAN'T LOGIN / AUTHENTICATION ISSUES:**\n1. Ask ONE question: \"What error message do you see? | Are you using the correct password? | Did you recently change your password?\"\n2. Based on answer, provide targeted solution:\n   - Wrong password: \"Try password reset from login page. Can you access that?\"\n   - Account locked: \"Account may be locked. Wait 15 minutes and try again, or I can create a ticket to unlock it. Which do you prefer?\"\n   - Specific error: Provide solution based on exact error message\n\n**PRINTER NOT WORKING:**\n1. Ask ONE question: \"What happens when printing? (error message/nothing/offline) | Is printer powered on? | Any warning lights?\"\n2. Based on answer:\n   - Offline: \"Go to Settings > Devices > Printers. Right-click printer > 'See what's printing'. Is it showing 'Offline'? If yes, right-click and select 'Use Printer Online'.\"\n   - Error message: Provide solution for specific error (out of paper, jam, low ink)\n   - Nothing happens: \"Check connection: USB cable connected, or Wi-Fi? Is printer showing as connected in Windows?\"\n\n**EMAIL NOT WORKING:**\n1. Ask ONE question: \"What's not working? (can't send/can't receive/can't access) | What error message?\"\n2. Based on answer:\n   - Can't send: \"In Outlook: File > Account Settings. Is account showing 'Connected'? If not, click 'Repair'.\"\n   - Can't receive: \"Check internet: Can you access other websites? If yes, check Outlook connection status.\"\n   - Error message: Provide solution based on specific error\n\n**TOKEN EFFICIENCY PRINCIPLES:**\n- ✅ ONE comprehensive question per issue (not sequential questions)\n- ✅ Use structured format (\"X | Y | Z\") to get multiple answers at once\n- ✅ Provide targeted solution based on their single answer\n- ✅ Verify with ONE question covering all outcomes\n- ❌ NEVER ask questions you can infer from conversation history\n- ❌ NEVER repeat information already provided\n\n=== DECISION TREES (Follow These Patterns) ===\n\n**User asks: \"Show my tickets\" / \"Check my tickets\" / \"What do I have open?\"**\n→ get_user_details → Get tickets agent → Summarize (count, most recent, status)\n\n**User has a problem / asks for help**\n→ STEP 1: Ask 2-3 diagnostic questions to understand the specific issue (e.g., \"How many browser tabs do you have open? When did it start? What were you doing when it happened?\")\n→ STEP 2: Based on their answers, provide SPECIFIC, ACTIONABLE steps (not generic advice)\n→ LAYER 1: kb_search (MANDATORY) → If found: Share solution with step-by-step guidance → Wait for user confirmation → If confirmed fixed: create_kb_article\n→ LAYER 2: If KB didn't help → firecrawl_search or use your diagnostic knowledge → Provide targeted solution based on their specific situation → Wait for user confirmation → If confirmed fixed: create_kb_article\n→ LAYER 3: If still not resolved after diagnostic questions and targeted solutions → create_incident (LAST RESORT)\n\n**Example - \"My laptop is slow\":**\n❌ BAD: \"Here are some general tips: restart, close programs, check updates\"\n✅ GOOD: \"Let me help diagnose this. A few quick questions: How many browser tabs do you have open right now? When did you first notice it being slow? Are you running any heavy applications like video editing or games?\"\n→ Then based on their answer: \"Since you have 20 tabs open, that's likely the cause. Let's close the ones you don't need. I'll guide you: Click the X on tabs you're not using, or press Ctrl+W (Windows) to close the current tab. Start with the oldest tabs first.\"\n\n**User asks about specific ticket (ticketId in context)**\n→ Fetch ticket details → Summarize status, latest notes, next steps\n\n**User asks: \"Search KB for X\" / templateAction = \"search_kb\"**\n→ If query incomplete: Ask \"What topic should I search for?\"\n→ If clear: kb_search → Filter and present relevant results\n\n**User says: \"I need help\" / templateAction = \"get_help\"**\n→ Acknowledge → Ask 1-2 clarifying questions → Offer options (check tickets, search KB, create incident, explain feature)\n\n**You successfully solve a user's issue**\n→ Check kb_search for similar solutions → If none exist: create_kb_article → Inform user\n\n**User asks about Ivanti features/processes**\n→ kb_search first → If not found: firecrawl_search (Ivanti docs only)\n\n**Need to create/update ticket and need field info**\n→ ivanti_metadata (get field names/options) → Use real values from metadata\n\n=== COMMUNICATION RULES ===\n\n**Tone & Style:**\n- Friendly, professional, empathetic\n- Short sentences (2-4 sentences per response)\n- Plain language - no acronyms, no API jargon, no technical terms\n- Never mention: tools, JSON, APIs, OData, system internals\n- Use examples and concrete steps\n\n**Response Structure (Token-Efficient):**\n1. Acknowledge briefly\n2. **ASK ONE COMPREHENSIVE DIAGNOSTIC QUESTION** (combine all points)\n3. Based on their single answer, provide SPECIFIC, ACTIONABLE steps\n4. Verify with ONE question covering all outcomes\n\n**Example Response Flow (Token-Efficient):**\nUser: \"My laptop is slow\"\nYou: \"Let me diagnose this quickly. How many browser tabs open? | What main applications running? | When did slowness start? (today/this week/longer)\"\n\n[User answers: \"About 20 tabs, Chrome and Outlook, started today\"]\n\nYou: \"20 tabs is likely the cause. Close unnecessary tabs: Press Ctrl+W repeatedly to close tabs. Keep only 5-10 essential ones. After closing tabs, is your laptop faster now, or still slow?\"\n\n[User: \"Much better!\" or \"Still slow\"]\n\nYou: [If better] \"Great! Keep tabs under 10 for best performance. Anything else I can help with?\"\n[If still slow] \"Since it's still slow, press Ctrl+Shift+Esc (Task Manager). In 'CPU' column, are any programs using >50%? If yes, right-click and 'End Task' for programs you don't need. Did that help?\"\n\n**Token Savings:**\n- ❌ OLD: 3 separate questions = ~150 tokens\n- ✅ NEW: 1 comprehensive question = ~50 tokens\n- Savings: ~100 tokens per interaction\n\n**When Tools Fail or Return Empty:**\n- Be honest: \"I couldn't find that in Ivanti\"\n- Suggest next step: \"Would you like me to create a new incident?\" or \"Let me search the knowledge base differently\"\n- Never guess or make up data\n\n**Error Recovery:**\n- If tool fails: Acknowledge, suggest alternative approach\n- If data missing: Ask ONE clear question, don't guess\n- If unclear input: Summarize what you understood, ask 1-2 specific questions\n\n=== SPECIAL SITUATIONS ===\n\n**Frustrated/Angry User:**\n- Acknowledge: \"I understand this is frustrating\" or \"Sorry you're having trouble\"\n- Stay calm, never mirror negativity\n- Focus on solution: \"Let me check [specific action] right away\"\n- Never blame user or other teams\n\n**Gibberish/Unclear Input:**\n- Politely: \"I didn't quite understand that. Could you rephrase?\"\n- Offer examples: \"You can say things like 'Show my tickets' or 'I need to reset my password'\"\n- If partially clear: Summarize what you understood, ask 1-2 specific questions\n\n**Out-of-Scope Questions:**\n- Politely: \"I can only help with Ivanti in your organization. This question is outside my scope.\"\n- Offer: \"Is there something Ivanti-related I can help with instead?\"\n\n**Using Dynamic Configuration:**\n- When presenting Categories/Priorities: Show 3-5 examples from availableCategories/availablePriorities\n- Never dump full lists or invent values\n- Use real names from Ivanti instance ({{ $json.availableCategories }}, {{ $json.availablePriorities }}, {{ $json.availableOfferings }})\n- Convert to user-friendly format (not raw data structures)\n\n=== EFFICIENCY TIPS ===\n- Use conversation history - don't re-ask for information already provided\n- Batch related tool calls when possible\n- If user says \"again\" or \"check it\", they mean the last thing you checked\n- Remember context: If they're on a ticket page, they likely want info about that ticket\n- Don't over-explain - be concise but helpful\n\n=== FINAL REMINDERS ===\n- You are helping real people with real problems. Be empathetic and efficient.\n- Every interaction should move toward resolution.\n- When in doubt, ask ONE clear question rather than guessing.\n- Always verify before creating KB articles - check if solution already exists.\n- Keep responses focused and actionable.\n\n"
         }
       },
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3,
       "position": [
-        368,
-        256
+        560,
+        208
       ],
-      "id": "09aeecf7-163b-4640-a605-ef836ef9bbc1",
+      "id": "0c0fa872-3529-48b0-a318-4dd4a01e8eff",
       "name": "Smart Agent"
     },
     {
@@ -672,10 +834,10 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.3,
       "position": [
-        -48,
-        -48
+        144,
+        -96
       ],
-      "id": "5febe592-2e4e-4995-b9eb-0577c29c9362",
+      "id": "cc8497e2-59d1-45ac-96f6-7dba0b7fb2c5",
       "name": "Switch"
     },
     {
@@ -712,10 +874,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        272,
-        -352
+        464,
+        -400
       ],
-      "id": "e1bafbf3-6b75-43d0-bdf8-b7f46d7dd4c0",
+      "id": "7b947189-3d14-4853-894d-483a4896247c",
       "name": "Fast Lookup",
       "disabled": true
     },
@@ -757,10 +919,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        192,
-        -64
+        384,
+        -112
       ],
-      "id": "a5d8f8be-9683-4381-8504-9419068fdd85",
+      "id": "fbc4b6ce-8d9d-454d-abc4-0914a61a85bd",
       "name": "Get User ID"
     },
     {
@@ -811,49 +973,53 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        352,
-        -64
+        544,
+        -112
       ],
-      "id": "1d0404a8-16f4-4d34-a339-d0eee84ab305",
+      "id": "4d7a0f6d-ce06-4cba-9dcc-1ff890d842e0",
       "name": "Get My Tickets"
     },
     {
       "parameters": {
-        "jsCode": "// UNIVERSAL FORMATTER (AI-First Edition) - Enhanced context recovery\nconst items = $input.all();\nif (!items.length) return [{ json: { response: \"No data.\" } }];\n\nconst data = items[0].json;\nlet output = \"\";\n\n// RECOVER CONTEXT from upstream nodes if missing from Smart Agent output\nlet userEmail = data.userEmail;\nlet query = data.query;\nlet sessionId = data.sessionId;\nlet route = data.route;\nlet userContext = data.userContext;\n\n// If context is missing (Smart Agent only outputs text), recover from upstream\nif (!userEmail || !sessionId) {\n  try {\n    // Try Format Discovery Data (closest upstream node)\n    const formatData = $('Format Discovery Data').first().json;\n    if (!userEmail && formatData.userEmail) userEmail = formatData.userEmail;\n    if (!sessionId && formatData.sessionId) sessionId = formatData.sessionId;\n    if (!query && formatData.query) query = formatData.query;\n    if (!route && formatData.route) route = formatData.route;\n    if (!userContext && formatData.userContext) userContext = formatData.userContext;\n  } catch (e) {\n    try {\n      // Fallback to Security & Data Prep (original source)\n      const securityData = $('Security & Data Prep').first().json;\n      if (!userEmail && securityData.userEmail) userEmail = securityData.userEmail;\n      if (!sessionId && securityData.sessionId) sessionId = securityData.sessionId;\n      if (!query && securityData.query) query = securityData.query;\n      if (!route && securityData.route) route = securityData.route;\n      if (!userContext && securityData.userContext) userContext = securityData.userContext;\n    } catch (e2) {\n      console.log('Could not recover context:', e2);\n    }\n  }\n}\n\n// PRESERVE CONTEXT\nconst preservedContext = {\n  userEmail: userEmail || null,\n  query: query || null,\n  sessionId: sessionId || null,\n  route: route || null,\n  userContext: userContext || null\n};\n\n// 1. Smart Agent output (LangChain Agent format)\nif (data.text) {\n    output = data.text;\n}\n// 2. AI Summarizer or Chain LLM output\nelse if (data.output) {\n    output = data.output;\n}\n// 3. Check for nested text/output in response object\nelse if (data.response?.text) {\n    output = data.response.text;\n}\nelse if (data.response?.output) {\n    output = data.response.output;\n}\n// 4. Handle raw API data (tickets array)\nelse if (data.value && Array.isArray(data.value)) {\n    if (data.value.length === 0) {\n        output = \"I couldn't find any matching records.\";\n    } else if (data.value[0].IncidentNumber) {\n        // Format incidents/tickets\n        output = data.value.map(t => `#${t.IncidentNumber}: ${t.Subject || 'No subject'}`).join('\\n');\n    } else if (data.value[0].Title) {\n        // Format KB articles\n        output = data.value.map(kb => `- ${kb.Title}`).join('\\n');\n    } else {\n        output = \"Found \" + data.value.length + \" record(s).\";\n    }\n}\n// 5. Handle string responses directly\nelse if (typeof data === 'string') {\n    output = data;\n}\n// 6. Last resort: stringify (but try to extract meaningful content)\nelse {\n    // Try to find any text-like fields\n    const textFields = ['message', 'content', 'result', 'answer'];\n    for (const field of textFields) {\n        if (data[field] && typeof data[field] === 'string') {\n            output = data[field];\n            break;\n        }\n    }\n    \n    // If still no output, stringify but clean it up\n    if (!output) {\n        output = JSON.stringify(data, null, 2);\n    }\n}\n\n// Ensure output is a string and not empty\nif (!output || typeof output !== 'string') {\n    output = \"I received a response, but couldn't format it properly.\";\n}\n\n// Return response with preserved context (both camelCase for workflow and snake_case for Supabase)\nreturn [{\n  json: {\n    response: output.trim(),\n    // camelCase (for workflow use)\n    ...preservedContext,\n    // snake_case (for Supabase nodes)\n    user_email: userEmail || null,\n    session_id: sessionId || null,\n    message_role: 'assistant', // This is the AI response\n    message_content: output.trim()\n  }\n}];"
+        "jsCode": "// UNIVERSAL FORMATTER (AI-First Edition) - Enhanced context recovery\nconst items = $input.all();\nif (!items.length) return [{ json: { response: \"No data.\" } }];\n\nconst data = items[0].json;\nlet output = \"\";\n\n// RECOVER CONTEXT from upstream nodes if missing from Smart Agent output\nlet userEmail = data.userEmail;\nlet query = data.query;\nlet sessionId = data.sessionId;\nlet route = data.route;\nlet userContext = data.userContext;\n\n// If context is missing (Smart Agent only outputs text), recover from upstream\nif (!userEmail || !sessionId) {\n  try {\n    // Try Format Discovery Data (closest upstream node)\n    const formatData = $('Format Discovery Data').first().json;\n    if (!userEmail && formatData.userEmail) userEmail = formatData.userEmail;\n    if (!sessionId && formatData.sessionId) sessionId = formatData.sessionId;\n    if (!query && formatData.query) query = formatData.query;\n    if (!route && formatData.route) route = formatData.route;\n    if (!userContext && formatData.userContext) userContext = formatData.userContext;\n  } catch (e) {\n    try {\n      // Fallback to Security & Data Prep (original source)\n      const securityData = $('Security & Data Prep').first().json;\n      if (!userEmail && securityData.userEmail) userEmail = securityData.userEmail;\n      if (!sessionId && securityData.sessionId) sessionId = securityData.sessionId;\n      if (!query && securityData.query) query = securityData.query;\n      if (!route && securityData.route) route = securityData.route;\n      if (!userContext && securityData.userContext) userContext = securityData.userContext;\n    } catch (e2) {\n      console.log('Could not recover context:', e2);\n    }\n  }\n}\n\n// ✅ NEW: Extract thoughtSignature from Smart Agent response (Gemini 3.0)\n// LangChain Agent may return thoughtSignature in the response metadata\nlet thoughtSignature = null;\nif (data.thoughtSignature) {\n  thoughtSignature = data.thoughtSignature;\n} else if (data.response?.thoughtSignature) {\n  thoughtSignature = data.response.thoughtSignature;\n} else if (data.metadata?.thoughtSignature) {\n  thoughtSignature = data.metadata.thoughtSignature;\n}\n\n// PRESERVE CONTEXT\nconst preservedContext = {\n  userEmail: userEmail || null,\n  query: query || null,\n  sessionId: sessionId || null,\n  route: route || null,\n  userContext: userContext || null,\n  // ✅ NEW: Include thoughtSignature in preserved context\n  thoughtSignature: thoughtSignature || null\n};\n\n// 1. Smart Agent output (LangChain Agent format)\nif (data.text) {\n    output = data.text;\n}\n// 2. AI Summarizer or Chain LLM output\nelse if (data.output) {\n    output = data.output;\n}\n// 3. Check for nested text/output in response object\nelse if (data.response?.text) {\n    output = data.response.text;\n}\nelse if (data.response?.output) {\n    output = data.response.output;\n}\n// 4. Handle raw API data (tickets array)\nelse if (data.value && Array.isArray(data.value)) {\n    if (data.value.length === 0) {\n        output = \"I couldn't find any matching records.\";\n    } else if (data.value[0].IncidentNumber) {\n        // Format incidents/tickets\n        output = data.value.map(t => `#${t.IncidentNumber}: ${t.Subject || 'No subject'}`).join('\\n');\n    } else if (data.value[0].Title) {\n        // Format KB articles\n        output = data.value.map(kb => `- ${kb.Title}`).join('\\n');\n    } else {\n        output = \"Found \" + data.value.length + \" record(s).\";\n    }\n}\n// 5. Handle string responses directly\nelse if (typeof data === 'string') {\n    output = data;\n}\n// 6. Last resort: stringify (but try to extract meaningful content)\nelse {\n    // Try to find any text-like fields\n    const textFields = ['message', 'content', 'result', 'answer'];\n    for (const field of textFields) {\n        if (data[field] && typeof data[field] === 'string') {\n            output = data[field];\n            break;\n        }\n    }\n    \n    // If still no output, stringify but clean it up\n    if (!output) {\n        output = JSON.stringify(data, null, 2);\n    }\n}\n\n// Ensure output is a string and not empty\nif (!output || typeof output !== 'string') {\n    output = \"I received a response, but couldn't format it properly.\";\n}\n\n// Return response with preserved context (both camelCase for workflow and snake_case for Supabase)\nreturn [{\n  json: {\n    response: output.trim(),\n    // camelCase (for workflow use)\n    ...preservedContext,\n    // snake_case (for Supabase nodes)\n    user_email: userEmail || null,\n    session_id: sessionId || null,\n    message_role: 'assistant', // This is the AI response\n    message_content: output.trim(),\n    // ✅ NEW: Include thoughtSignature for extension to persist\n    thoughtSignature: thoughtSignature || null\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        832,
-        -32
+        1024,
+        -80
       ],
-      "id": "676889d8-7afc-45b3-a1ad-646ea780e5c7",
+      "id": "2b425f4c-11d2-473d-8904-292669e0311e",
       "name": "Universal Formatter"
     },
     {
       "parameters": {
-        "jsCode": "// Generate Contextual Suggestions based on conversation history and current context\nconst items = $input.all();\nif (!items.length) return [{ json: { suggestions: [] } }];\n\nconst data = items[0].json;\nconst suggestions = [];\n\n// Get conversation history from Security & Data Prep\nlet conversationHistory = [];\ntry {\n  const securityData = $('Security & Data Prep').first().json;\n  conversationHistory = securityData.rawConversationHistory || securityData.conversationHistory || [];\n} catch (e) {\n  console.log('Could not get conversation history:', e);\n}\n\n// Get current query and response\nconst query = (data.query || '').toLowerCase().trim();\nconst response = (data.response || '').toLowerCase().trim();\nconst route = data.route || null;\nconst userContext = data.userContext || {};\n\n// Analyze last few messages for context\nconst recentMessages = conversationHistory.slice(-5);\nconst lastUserMessage = recentMessages.filter(m => m.role === 'user' || m.role === 'human').pop();\nconst lastAssistantMessage = recentMessages.filter(m => m.role === 'assistant' || m.role === 'ai').pop();\nconst lastUserContent = (lastUserMessage?.content || '').toLowerCase();\nconst lastAssistantContent = (lastAssistantMessage?.content || '').toLowerCase();\n\n// PATTERN 1: User searched KB or knowledge base\nif (lastUserContent.includes('search') && (lastUserContent.includes('kb') || lastUserContent.includes('knowledge') || lastUserContent.includes('article'))) {\n  suggestions.push({\n    id: 'suggest-more-kb',\n    label: 'Show more results',\n    prompt: 'Show me more knowledge base articles',\n    icon: '🔍',\n    priority: 1\n  });\n  \n  if (response.includes('no result') || response.includes('couldn\\'t find') || response.includes('not found')) {\n    suggestions.push({\n      id: 'suggest-create-ticket-after-kb',\n      label: 'Create ticket',\n      prompt: 'I need to create a ticket for this issue',\n      icon: '➕',\n      priority: 2\n    });\n  } else if (!response.includes('no result') && !response.includes('couldn\\'t find')) {\n    suggestions.push({\n      id: 'suggest-create-ticket-if-needed',\n      label: 'Create ticket if this doesn\\'t help',\n      prompt: 'This solution doesn\\'t help, I need to create a ticket',\n      icon: '➕',\n      priority: 3\n    });\n  }\n}\n\n// PATTERN 2: User viewed tickets\nif (lastUserContent.includes('ticket') && (lastUserContent.includes('show') || lastUserContent.includes('list') || lastUserContent.includes('my') || lastUserContent.includes('all'))) {\n  suggestions.push({\n    id: 'suggest-update-ticket',\n    label: 'Update a ticket',\n    prompt: 'I want to update one of my tickets',\n    icon: '✏️',\n    priority: 1\n  });\n  \n  suggestions.push({\n    id: 'suggest-create-new-ticket',\n    label: 'Create new ticket',\n    prompt: 'I need to create a new ticket',\n    icon: '➕',\n    priority: 2\n  });\n  \n  if (response.includes('no ticket') || response.includes('don\\'t have') || response.includes('closed')) {\n    suggestions.push({\n      id: 'suggest-search-kb-after-no-tickets',\n      label: 'Search knowledge base',\n      prompt: 'Search the knowledge base for common issues',\n      icon: '🔍',\n      priority: 3\n    });\n  }\n}\n\n// PATTERN 3: User just created a ticket (mentioned in response)\nif (response.includes('created') && (response.includes('ticket') || response.includes('incident'))) {\n  suggestions.push({\n    id: 'suggest-view-all-tickets',\n    label: 'View all tickets',\n    prompt: 'Show me all my open tickets',\n    icon: '📋',\n    priority: 1\n  });\n  \n  suggestions.push({\n    id: 'suggest-search-kb-while-waiting',\n    label: 'Search KB while waiting',\n    prompt: 'Search the knowledge base for solutions while waiting',\n    icon: '🔍',\n    priority: 2\n  });\n}\n\n// PATTERN 4: User has a problem/issue (mentioned in query or response)\nif (query.includes('problem') || query.includes('issue') || query.includes('help') || query.includes('error') || query.includes('broken')) {\n  // Only add if we haven't already added KB search suggestions\n  const hasKbSuggestion = suggestions.some(s => s.id.includes('kb'));\n  if (!hasKbSuggestion) {\n    suggestions.push({\n      id: 'suggest-search-kb-for-problem',\n      label: 'Search knowledge base',\n      prompt: 'Search the knowledge base for solutions',\n      icon: '🔍',\n      priority: 1\n    });\n  }\n  \n  // If problem not resolved, suggest creating ticket\n  if (response.includes('couldn\\'t') || response.includes('unable') || response.includes('not found') || response.includes('no solution')) {\n    suggestions.push({\n      id: 'suggest-create-ticket-for-problem',\n      label: 'Create ticket',\n      prompt: 'I need to create a ticket for this problem',\n      icon: '➕',\n      priority: 2\n    });\n  }\n}\n\n// PATTERN 5: User is on a ticket page (ticketId in context)\nif (userContext.ticketId) {\n  suggestions.push({\n    id: 'suggest-view-ticket-details',\n    label: 'View ticket details',\n    prompt: 'Show me details about this ticket',\n    icon: '📄',\n    priority: 1\n  });\n  \n  suggestions.push({\n    id: 'suggest-update-current-ticket',\n    label: 'Update this ticket',\n    prompt: 'I want to update this ticket',\n    icon: '✏️',\n    priority: 2\n  });\n}\n\n// PATTERN 6: Route-based suggestions\nif (route === 'my_tickets') {\n  // User just viewed their tickets\n  if (!suggestions.some(s => s.id === 'suggest-create-new-ticket')) {\n    suggestions.push({\n      id: 'suggest-create-new-ticket-route',\n      label: 'Create new ticket',\n      prompt: 'I need to create a new ticket',\n      icon: '➕',\n      priority: 2\n    });\n  }\n}\n\n// DEFAULT: If no contextual suggestions, provide general quick actions\nif (suggestions.length === 0) {\n  suggestions.push(\n    {\n      id: 'default-tickets',\n      label: 'Show my tickets',\n      prompt: 'Show me all my open tickets',\n      icon: '📋',\n      priority: 1\n    },\n    {\n      id: 'default-kb',\n      label: 'Search knowledge base',\n      prompt: 'Search the knowledge base',\n      icon: '🔍',\n      priority: 2\n    },\n    {\n      id: 'default-help',\n      label: 'I need help',\n      prompt: 'I need help with',\n      icon: '❓',\n      priority: 3\n    }\n  );\n}\n\n// Limit to 5 suggestions and sort by priority\nconst finalSuggestions = suggestions\n  .sort((a, b) => (a.priority || 999) - (b.priority || 999))\n  .slice(0, 5);\n\n// Return data with suggestions added\nreturn [{\n  json: {\n    ...data, // Preserve all original data\n    suggestions: finalSuggestions\n  }\n}];"
+        "jsCode": "// Generate Contextual Suggestions based on conversation history and current context\n// Enhanced with literal conversation analysis for dynamic suggestions\nconst items = $input.all();\nif (!items.length) return [{ json: { suggestions: [] } }];\n\nconst data = items[0].json;\nconst suggestions = [];\n\n// Get conversation history from Security & Data Prep\nlet conversationHistory = [];\ntry {\n  const securityData = $('Security & Data Prep').first().json;\n  conversationHistory = securityData.rawConversationHistory || securityData.conversationHistory || [];\n} catch (e) {\n  console.log('Could not get conversation history:', e);\n}\n\n// Get current query and response\nconst query = (data.query || '').toLowerCase().trim();\nconst response = (data.response || '').toLowerCase().trim();\nconst route = data.route || null;\nconst userContext = data.userContext || {};\n\n// Analyze last few messages for context (get more context for better analysis)\nconst recentMessages = conversationHistory.slice(-8); // Increased from -5 to -8 for better context\nconst lastUserMessage = recentMessages.filter(m => m.role === 'user' || m.role === 'human').pop();\nconst secondLastUserMessage = recentMessages.filter(m => m.role === 'user' || m.role === 'human').slice(-2)[0];\nconst lastAssistantMessage = recentMessages.filter(m => m.role === 'assistant' || m.role === 'ai').pop();\nconst lastUserContent = (lastUserMessage?.content || '').toLowerCase();\nconst secondLastUserContent = (secondLastUserMessage?.content || '').toLowerCase();\nconst lastAssistantContent = (lastAssistantMessage?.content || '').toLowerCase();\n\n// ✅ NEW: PATTERN 0 - Literal conversation state detection (highest priority)\n// Detect what the user literally just said and respond accordingly\n\n// User says problem is RESOLVED/FIXED\nif (lastUserContent.match(/\\b(it'?s|it is|that'?s|that is|this is|this'?s)\\s+(fixed|resolved|solved|working|done|good|great|perfect|thanks|thank you|appreciate|helped)\\b/i) ||\n    lastUserContent.match(/\\b(fixed|resolved|solved|working|done|got it|understood|perfect|thanks|thank you)\\b/i) ||\n    lastUserContent.match(/\\b(that|this|it)\\s+(worked|works|helped|helped me|solved|fixed|resolved)\\b/i)) {\n  \n  // If on a ticket page, suggest closing it\n  if (userContext.ticketId) {\n    suggestions.push({\n      id: 'suggest-close-ticket-resolved',\n      label: 'Close this ticket',\n      prompt: 'I want to close this ticket since it\\'s resolved',\n      icon: '✅',\n      priority: 1\n    });\n  }\n  \n  // Always offer to help with something else\n  suggestions.push({\n    id: 'suggest-anything-else',\n    label: 'Anything else I can help with?',\n    prompt: 'Is there anything else I can help you with?',\n    icon: '💬',\n    priority: 2\n  });\n  \n  // If they just viewed tickets, suggest viewing all\n  if (lastAssistantContent.includes('ticket') && (lastAssistantContent.includes('show') || lastAssistantContent.includes('list'))) {\n    suggestions.push({\n      id: 'suggest-view-all-tickets-after-resolved',\n      label: 'View all my tickets',\n      prompt: 'Show me all my tickets',\n      icon: '📋',\n      priority: 3\n    });\n  }\n  \n  // Skip other patterns if user confirmed resolution\n  return [{\n    json: {\n      ...data,\n      suggestions: suggestions.slice(0, 3) // Limit to 3 for resolved state\n    }\n  }];\n}\n\n// User says they NEED HELP or are STUCK\nif (lastUserContent.match(/\\b(need help|need assistance|stuck|confused|don'?t understand|can'?t|unable to|cannot|doesn'?t work|not working|still|still have|still having)\\b/i)) {\n  suggestions.push({\n    id: 'suggest-search-kb-for-help',\n    label: 'Search knowledge base',\n    prompt: 'Search the knowledge base for solutions',\n    icon: '🔍',\n    priority: 1\n  });\n  \n  suggestions.push({\n    id: 'suggest-create-ticket-for-help',\n    label: 'Create a ticket',\n    prompt: 'I need to create a ticket for this issue',\n    icon: '➕',\n    priority: 2\n  });\n  \n  if (userContext.ticketId) {\n    suggestions.push({\n      id: 'suggest-update-ticket-stuck',\n      label: 'Update this ticket',\n      prompt: 'I want to add more details to this ticket',\n      icon: '✏️',\n      priority: 3\n    });\n  }\n}\n\n// User says they DON'T KNOW or are UNCERTAIN\nif (lastUserContent.match(/\\b(don'?t know|not sure|unsure|maybe|perhaps|think|wondering|question|how do|what is|where is)\\b/i)) {\n  suggestions.push({\n    id: 'suggest-search-kb-uncertain',\n    label: 'Search knowledge base',\n    prompt: 'Search the knowledge base',\n    icon: '🔍',\n    priority: 1\n  });\n  \n  suggestions.push({\n    id: 'suggest-view-tickets-uncertain',\n    label: 'Check my tickets',\n    prompt: 'Show me my tickets',\n    icon: '📋',\n    priority: 2\n  });\n}\n\n// User says NO or REJECTS suggestion\nif (lastUserContent.match(/\\b(no|nope|not|don'?t|doesn'?t|won'?t|can'?t|unable|that'?s not|that doesn'?t|that won'?t)\\b/i) && \n    (lastAssistantContent.includes('ticket') || lastAssistantContent.includes('knowledge') || lastAssistantContent.includes('search'))) {\n  \n  // If they rejected KB search, offer ticket creation\n  if (lastAssistantContent.includes('knowledge') || lastAssistantContent.includes('article')) {\n    suggestions.push({\n      id: 'suggest-create-ticket-after-reject-kb',\n      label: 'Create a ticket',\n      prompt: 'I need to create a ticket for this',\n      icon: '➕',\n      priority: 1\n    });\n  }\n  \n  // If they rejected ticket creation, offer KB search\n  if (lastAssistantContent.includes('ticket') || lastAssistantContent.includes('incident')) {\n    suggestions.push({\n      id: 'suggest-search-kb-after-reject-ticket',\n      label: 'Search knowledge base',\n      prompt: 'Search the knowledge base for solutions',\n      icon: '🔍',\n      priority: 1\n    });\n  }\n  \n  suggestions.push({\n    id: 'suggest-alternative-help',\n    label: 'What else can I help with?',\n    prompt: 'What else can you help me with?',\n    icon: '❓',\n    priority: 2\n  });\n}\n\n// User asks FOLLOW-UP questions (what, how, when, where, why)\nif (lastUserContent.match(/^\\s*(what|how|when|where|why|who|which|can you|could you|would you|is it|are there|do you)\\b/i)) {\n  // Keep context - don't change suggestions much, just ensure relevant ones are there\n  // This will fall through to other patterns\n}\n\n// PATTERN 1: User searched KB or knowledge base\nif (lastUserContent.includes('search') && (lastUserContent.includes('kb') || lastUserContent.includes('knowledge') || lastUserContent.includes('article'))) {\n  suggestions.push({\n    id: 'suggest-more-kb',\n    label: 'Show more results',\n    prompt: 'Show me more knowledge base articles',\n    icon: '🔍',\n    priority: 1\n  });\n  \n  if (response.includes('no result') || response.includes('couldn\\'t find') || response.includes('not found')) {\n    suggestions.push({\n      id: 'suggest-create-ticket-after-kb',\n      label: 'Create ticket',\n      prompt: 'I need to create a ticket for this issue',\n      icon: '➕',\n      priority: 2\n    });\n  } else if (!response.includes('no result') && !response.includes('couldn\\'t find')) {\n    suggestions.push({\n      id: 'suggest-create-ticket-if-needed',\n      label: 'Create ticket if this doesn\\'t help',\n      prompt: 'This solution doesn\\'t help, I need to create a ticket',\n      icon: '➕',\n      priority: 3\n    });\n  }\n}\n\n// PATTERN 2: User viewed tickets\nif (lastUserContent.includes('ticket') && (lastUserContent.includes('show') || lastUserContent.includes('list') || lastUserContent.includes('my') || lastUserContent.includes('all'))) {\n  suggestions.push({\n    id: 'suggest-update-ticket',\n    label: 'Update a ticket',\n    prompt: 'I want to update one of my tickets',\n    icon: '✏️',\n    priority: 1\n  });\n  \n  suggestions.push({\n    id: 'suggest-create-new-ticket',\n    label: 'Create new ticket',\n    prompt: 'I need to create a new ticket',\n    icon: '➕',\n    priority: 2\n  });\n  \n  if (response.includes('no ticket') || response.includes('don\\'t have') || response.includes('closed')) {\n    suggestions.push({\n      id: 'suggest-search-kb-after-no-tickets',\n      label: 'Search knowledge base',\n      prompt: 'Search the knowledge base for common issues',\n      icon: '🔍',\n      priority: 3\n    });\n  }\n}\n\n// PATTERN 3: User just created a ticket (mentioned in response)\nif (response.includes('created') && (response.includes('ticket') || response.includes('incident'))) {\n  suggestions.push({\n    id: 'suggest-view-all-tickets',\n    label: 'View all tickets',\n    prompt: 'Show me all my open tickets',\n    icon: '📋',\n    priority: 1\n  });\n  \n  suggestions.push({\n    id: 'suggest-search-kb-while-waiting',\n    label: 'Search KB while waiting',\n    prompt: 'Search the knowledge base for solutions while waiting',\n    icon: '🔍',\n    priority: 2\n  });\n}\n\n// PATTERN 4: User has a problem/issue (mentioned in query or response)\nif (query.includes('problem') || query.includes('issue') || query.includes('help') || query.includes('error') || query.includes('broken')) {\n  // Only add if we haven't already added KB search suggestions\n  const hasKbSuggestion = suggestions.some(s => s.id.includes('kb'));\n  if (!hasKbSuggestion) {\n    suggestions.push({\n      id: 'suggest-search-kb-for-problem',\n      label: 'Search knowledge base',\n      prompt: 'Search the knowledge base for solutions',\n      icon: '🔍',\n      priority: 1\n    });\n  }\n  \n  // If problem not resolved, suggest creating ticket\n  if (response.includes('couldn\\'t') || response.includes('unable') || response.includes('not found') || response.includes('no solution')) {\n    suggestions.push({\n      id: 'suggest-create-ticket-for-problem',\n      label: 'Create ticket',\n      prompt: 'I need to create a ticket for this problem',\n      icon: '➕',\n      priority: 2\n    });\n  }\n}\n\n// PATTERN 5: User is on a ticket page (ticketId in context)\nif (userContext.ticketId) {\n  suggestions.push({\n    id: 'suggest-view-ticket-details',\n    label: 'View ticket details',\n    prompt: 'Show me details about this ticket',\n    icon: '📄',\n    priority: 1\n  });\n  \n  suggestions.push({\n    id: 'suggest-update-current-ticket',\n    label: 'Update this ticket',\n    prompt: 'I want to update this ticket',\n    icon: '✏️',\n    priority: 2\n  });\n}\n\n// PATTERN 6: Route-based suggestions\nif (route === 'my_tickets') {\n  // User just viewed their tickets\n  if (!suggestions.some(s => s.id === 'suggest-create-new-ticket')) {\n    suggestions.push({\n      id: 'suggest-create-new-ticket-route',\n      label: 'Create new ticket',\n      prompt: 'I need to create a new ticket',\n      icon: '➕',\n      priority: 2\n    });\n  }\n}\n\n// DEFAULT: If no contextual suggestions, provide general quick actions\nif (suggestions.length === 0) {\n  suggestions.push(\n    {\n      id: 'default-tickets',\n      label: 'Show my tickets',\n      prompt: 'Show me all my open tickets',\n      icon: '📋',\n      priority: 1\n    },\n    {\n      id: 'default-kb',\n      label: 'Search knowledge base',\n      prompt: 'Search the knowledge base',\n      icon: '🔍',\n      priority: 2\n    },\n    {\n      id: 'default-help',\n      label: 'I need help',\n      prompt: 'I need help with',\n      icon: '❓',\n      priority: 3\n    }\n  );\n}\n\n// Limit to 5 suggestions and sort by priority\nconst finalSuggestions = suggestions\n  .sort((a, b) => (a.priority || 999) - (b.priority || 999))\n  .slice(0, 5);\n\n// Return data with suggestions added (preserve thoughtSignature if present)\nreturn [{\n  json: {\n    ...data, // Preserve all original data including thoughtSignature\n    suggestions: finalSuggestions\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1008,
-        -32
+        1200,
+        -80
       ],
-      "id": "c1e782b7-aadf-423a-aeb0-7328fc0cd195",
+      "id": "14bae15d-964d-4d44-bae3-c8957518f9dc",
       "name": "Generate Contextual Suggestions"
     },
     {
       "parameters": {
-        "options": {}
+        "options": {
+          "responseData": "allEntries",
+          "responseCode": 200,
+          "responseBody": "={{ JSON.stringify({\n  text: $json.response || $json.text || '',\n  suggestions: $json.suggestions || [],\n  thinkingSteps: $json.thinkingSteps || [],\n  thoughtSignature: $json.thoughtSignature || null,\n  usage: $json.usage || null\n}) }}"
+        }
       },
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
       "position": [
-        1184,
-        -32
+        1552,
+        -80
       ],
-      "id": "25dbbd19-c5f1-4745-9fe5-4d03c51e2884",
+      "id": "79e9bf5b-aac1-4a54-b4e4-27d093e257b6",
       "name": "Respond to Webhook"
     },
     {
@@ -864,10 +1030,10 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        1536,
-        -208
+        1728,
+        -256
       ],
-      "id": "7c0f5fa1-f5a1-4db8-a2d9-96f48fc7fac5",
+      "id": "8935b959-321d-430e-a7e8-823c60fcd9fc",
       "name": "Store Solved Issue",
       "credentials": {
         "supabaseApi": {
@@ -883,10 +1049,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1360,
-        -208
+        1552,
+        -256
       ],
-      "id": "f910af41-3543-424e-be5c-8798f90c8c22",
+      "id": "616c8023-1941-41be-b89e-00b42b19b51c",
       "name": "Check If Resolved"
     },
     {
@@ -896,10 +1062,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1184,
-        -208
+        1376,
+        -256
       ],
-      "id": "ab243108-f260-4ca8-973f-c97733dac22b",
+      "id": "0cc6faf5-276d-4a7f-9ca9-5140d310b52c",
       "name": "Analyze Conversation"
     },
     {
@@ -909,10 +1075,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -832,
-        -32
+        -640,
+        -80
       ],
-      "id": "331991f7-9b53-4009-8614-f02325acb846",
+      "id": "f75dec4a-4dfd-4d6f-9686-a316721239b0",
       "name": "Cache Discovery Data"
     },
     {
@@ -922,10 +1088,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1536,
-        -32
+        -1344,
+        -80
       ],
-      "id": "d94b9a3c-12ab-48b2-83bb-00a7f99c58c3",
+      "id": "8012245c-fe1c-43db-a554-6fbfe47ff5c2",
       "name": "Check Discovery Cache"
     },
     {
@@ -936,10 +1102,10 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        -1744,
-        176
+        -1552,
+        128
       ],
-      "id": "070e8eac-f95c-4b2f-bcea-2bef829f0e01",
+      "id": "cd3083ed-d635-4080-bab4-05603b44d525",
       "name": "Load User Patterns",
       "credentials": {
         "supabaseApi": {
@@ -971,10 +1137,10 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        1712,
-        144
+        1904,
+        96
       ],
-      "id": "b95694fd-d42f-4086-b060-ef36f3c9f9de",
+      "id": "5e800153-1428-4471-97d6-a1dbedda29cd",
       "name": "Update User Patterns",
       "credentials": {
         "supabaseApi": {
@@ -990,10 +1156,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1536,
-        144
+        1728,
+        96
       ],
-      "id": "80839a79-a332-4890-9398-ac3d14c87418",
+      "id": "c4a19084-41a0-407d-8300-b1c5812c5215",
       "name": "Prepare Pattern Data"
     },
     {
@@ -1004,10 +1170,10 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        -1744,
-        368
+        -1552,
+        320
       ],
-      "id": "a2c90371-6cfe-4d1c-b1fc-8ef5d17794ad",
+      "id": "cb06a1b9-0475-4923-9d01-e2a8452ba99b",
       "name": "Load User History",
       "credentials": {
         "supabaseApi": {
@@ -1051,10 +1217,10 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        1360,
-        144
+        1552,
+        96
       ],
-      "id": "c553ed7b-a017-4d75-97d2-f15dda294733",
+      "id": "b6a32de7-e470-4681-af2a-a3d79ae7031b",
       "name": "Store AI Response",
       "credentials": {
         "supabaseApi": {
@@ -1070,10 +1236,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1152,
-        144
+        1344,
+        96
       ],
-      "id": "0753c331-8f7c-4100-81cb-7485d08008c0",
+      "id": "ea4f312c-6eea-4d82-bc03-4cc07e87f9ac",
       "name": "Format AI Response"
     },
     {
@@ -1084,10 +1250,10 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        1200,
-        320
+        1392,
+        272
       ],
-      "id": "5a3da2d6-57f8-4c5f-bf3f-6f13a1d78516",
+      "id": "dfb277b3-7c61-4734-9ca1-c6fab57b703c",
       "name": "Store User Message",
       "credentials": {
         "supabaseApi": {
@@ -1103,10 +1269,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1024,
-        320
+        1216,
+        272
       ],
-      "id": "5a1711cf-f488-4104-bcce-2d2ec5ae472f",
+      "id": "3ec5bc29-6e9d-43a4-949a-3d77c9675a91",
       "name": "Format User Message"
     },
     {
@@ -1116,14 +1282,26 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1744,
-        -32
+        -1552,
+        -80
       ],
-      "id": "ccbee7e2-d299-4be9-b1c6-6e8f88372dfa",
+      "id": "bafba82c-6f85-4731-bed4-e4293cde5209",
       "name": "Fast Path Check"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract thoughtSignature from Smart Agent response (Gemini 3.0)\nconst items = $input.all();\nif (!items.length) return [{ json: { ...items[0]?.json || {}, thoughtSignature: null } }];\n\nconst data = items[0].json;\n\n// Try multiple locations where thoughtSignature might be\nlet thoughtSignature = null;\n\n// 1. Direct property\nif (data.thoughtSignature) {\n  thoughtSignature = data.thoughtSignature;\n}\n// 2. In response object\nelse if (data.response?.thoughtSignature) {\n  thoughtSignature = data.response.thoughtSignature;\n}\n// 3. In metadata\nelse if (data.metadata?.thoughtSignature) {\n  thoughtSignature = data.metadata.thoughtSignature;\n}\n// 4. Check if Smart Agent output has it in nested structure\nelse if (data.output?.thoughtSignature) {\n  thoughtSignature = data.output.thoughtSignature;\n}\n// 5. Check if it's in the raw response from Gemini\nelse if (data.rawResponse?.candidates?.[0]?.thoughtSignature) {\n  thoughtSignature = data.rawResponse.candidates[0].thoughtSignature;\n}\n\n// Log for debugging\nif (thoughtSignature) {\n  console.log('[n8n] ✅ Extracted thoughtSignature from Gemini response');\n} else {\n  console.log('[n8n] ⚠️ No thoughtSignature found (may be first turn or unsupported model)');\n}\n\n// Pass through all data and add thoughtSignature\nreturn [{\n  json: {\n    ...data,\n    thoughtSignature: thoughtSignature || null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1376,
+        -160
+      ],
+      "id": "extract-thought-signature-node",
+      "name": "Extract thoughtSignature"
     }
   ],
-  "pinData": {},
   "connections": {
     "Google Gemini Chat Model2": {
       "ai_languageModel": [
@@ -1322,6 +1500,50 @@
         ]
       ]
     },
+    "create_incident": {
+      "ai_tool": [
+        [
+          {
+            "node": "Smart Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "update_ticket": {
+      "ai_tool": [
+        [
+          {
+            "node": "Smart Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "close_ticket": {
+      "ai_tool": [
+        [
+          {
+            "node": "Smart Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check_ticket_status": {
+      "ai_tool": [
+        [
+          {
+            "node": "Smart Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Redis Chat Memory": {
       "ai_memory": [
         [
@@ -1440,6 +1662,17 @@
       ]
     },
     "Generate Contextual Suggestions": {
+      "main": [
+        [
+          {
+            "node": "Extract thoughtSignature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract thoughtSignature": {
       "main": [
         [
           {
@@ -1571,15 +1804,9 @@
       ]
     }
   },
-  "active": true,
-  "settings": {
-    "executionOrder": "v1"
-  },
-  "versionId": "1a24cea4-41b9-4832-aa9b-787fae411aa3",
+  "pinData": {},
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "d01a6a8c11890acdbdc9cdddc68985eaa48ca0323d040fb817e6a87a3e72b287"
-  },
-  "id": "hBldB06ZLVVXwlSQ",
-  "tags": []
+  }
 }
